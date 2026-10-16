@@ -4,3 +4,4 @@ build/
 /*.png
 /*.hdr
 /*.pfm
+models/external/

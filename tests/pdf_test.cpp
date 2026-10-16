@@ -88,6 +88,11 @@ int main() {
     hittable_pdf to_ball(ball, origin);
     ok &= check("sphere light pdf integral", integral(to_ball), 1.0, 0.02);
 
+    sphere dome(point3(0.2, 0.1, 0), -3.0, mat);  // Seen from inside
+    hittable_pdf to_dome(dome, origin);
+    ok &= check("sphere light pdf integral from inside", integral(to_dome), 1.0, 0.02);
+    ok &= check("sphere light sampling from inside", cap_solid_angle(to_dome, vec3(0, 1, 0), 0.0), 2 * pi, 0.05);
+
     quad panel(point3(-1, 2, -1), vec3(2, 0, 0), vec3(0, 0, 2), mat);
     hittable_pdf to_panel(panel, origin);
     ok &= check("quad light pdf integral", integral(to_panel), 1.0, 0.02);

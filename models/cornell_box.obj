@@ -1,0 +1,101 @@
+# The original Cornell box, from the measured data published by the Cornell
+# Program of Computer Graphics (https://www.graphics.cornell.edu/online/box/data.html).
+# Units are millimetres. usemtl names: white, red, green, light.
+
+g white
+usemtl white
+v 552.8 0 0
+v 0 0 0
+v 0 0 559.2
+v 549.6 0 559.2
+f 1 2 3 4
+v 556 548.8 0
+v 556 548.8 559.2
+v 0 548.8 559.2
+v 0 548.8 0
+f 5 6 7 8
+v 549.6 0 559.2
+v 0 0 559.2
+v 0 548.8 559.2
+v 556 548.8 559.2
+f 9 10 11 12
+
+g red
+usemtl red
+v 552.8 0 0
+v 549.6 0 559.2
+v 556 548.8 559.2
+v 556 548.8 0
+f 13 14 15 16
+
+g green
+usemtl green
+v 0 0 559.2
+v 0 0 0
+v 0 548.8 0
+v 0 548.8 559.2
+f 17 18 19 20
+
+g light
+usemtl light
+v 343 548.7 227
+v 343 548.7 332
+v 213 548.7 332
+v 213 548.7 227
+f 21 22 23 24
+
+g short_block
+usemtl white
+v 130 165 65
+v 82 165 225
+v 240 165 272
+v 290 165 114
+f 25 26 27 28
+v 290 0 114
+v 290 165 114
+v 240 165 272
+v 240 0 272
+f 29 30 31 32
+v 130 0 65
+v 130 165 65
+v 290 165 114
+v 290 0 114
+f 33 34 35 36
+v 82 0 225
+v 82 165 225
+v 130 165 65
+v 130 0 65
+f 37 38 39 40
+v 240 0 272
+v 240 165 272
+v 82 165 225
+v 82 0 225
+f 41 42 43 44
+
+g tall_block
+usemtl white
+v 423 330 247
+v 265 330 296
+v 314 330 456
+v 472 330 406
+f 45 46 47 48
+v 423 0 247
+v 423 330 247
+v 472 330 406
+v 472 0 406
+f 49 50 51 52
+v 472 0 406
+v 472 330 406
+v 314 330 456
+v 314 0 456
+f 53 54 55 56
+v 314 0 456
+v 314 330 456
+v 265 330 296
+v 265 0 296
+f 57 58 59 60
+v 265 0 296
+v 265 330 296
+v 423 330 247
+v 423 0 247
+f 61 62 63 64

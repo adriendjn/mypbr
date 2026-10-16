@@ -267,8 +267,11 @@ class camera{
                     r = srec.skip_pdf_ray;
                     specular = true;
                 } else {
+                    // On the last bounce no BSDF ray follows to find the light,
+                    // so the light sample takes the whole contribution
+                    bool last_bounce = depth == max_depth - 1;
                     if (!lights.empty())
-                        radiance += beta * sample_light(r, rec, *srec.pdf_ptr, world, lights);
+                        radiance += beta * sample_light(r, rec, *srec.pdf_ptr, world, lights, last_bounce);
 
                     vec3 direction = srec.pdf_ptr->generate();
                     scatter_pdf = srec.pdf_ptr->value(direction);
@@ -296,10 +299,10 @@ class camera{
 
         // Next event estimation: light arriving at rec directly from a point
         // sampled on the lights, times f * cos, MIS weighted against the BSDF
-        // sampling density.
+        // sampling density (unweighted on the last bounce).
         color sample_light(
             const ray& r_in, const hit_record& rec, const pdf& bsdf_pdf,
-            const hittable& world, const hittable_list& lights
+            const hittable& world, const hittable_list& lights, bool last_bounce
         ) const {
             vec3 to_light = lights.random(rec.p);
             auto light_pdf = lights.pdf_value(rec.p, to_light);
@@ -317,7 +320,7 @@ class camera{
                 return color(0, 0, 0);
 
             color emission = light_rec.mat->emitted(shadow, light_rec);
-            auto weight = power_heuristic(light_pdf, bsdf_pdf.value(to_light));
+            auto weight = last_bounce ? 1.0 : power_heuristic(light_pdf, bsdf_pdf.value(to_light));
             return f * emission * (weight / light_pdf);
         }
 

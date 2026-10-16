@@ -3,11 +3,14 @@
 
 #include "camera.h"
 #include "hittable_list.h"
+#include "instance.h"
 #include "material.h"
+#include "obj_loader.h"
 #include "quad.h"
 #include "sphere.h"
 #include "texture.h"
 #include "tonemap.h"
+#include "transform.h"
 
 #include <fstream>
 #include <iostream>
@@ -15,6 +18,7 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <tuple>
 
 // Everything a scene file describes.
 class scene{
@@ -65,6 +69,22 @@ class scene{
 //   sphere       0 0 -1  0.5  glass   # center x y z, radius, [material]
 //   quad   Qx Qy Qz  ux uy uz  vx vy vz  [material]   # corner, two edges
 //   box    x0 y0 z0  x1 y1 z1  [material]            # two opposite corners
+//   mesh   models/bunny.obj  [smooth] [material]      # Wavefront OBJ, path relative
+//                                                     # to the scene file; smooth
+//                                                     # makes vertex normals if the
+//                                                     # file has none
+//
+// Any object can be followed by transforms, applied in the order given:
+//
+//   box 0 0 0  165 330 165  white  rotate_y 15  translate 265 0 295
+//   mesh bunny.obj glass  scale 2000  rotate 30 0 1 0  translate 278 0 278
+//
+//   translate x y z | scale s | scale sx sy sz | rotate_x|rotate_y|rotate_z deg
+//   rotate deg ax ay az   # about an arbitrary axis
+//
+// Transformed objects are instances sharing the original geometry; a mesh
+// file used several times with the same material is loaded once. In a mesh,
+// "usemtl <name>" selects the scene material of that name when there is one.
 //
 // Materials must be defined before they are used. A sphere without a
 // material name gets a default grey Lambertian.
@@ -121,20 +141,104 @@ inline bool load_scene(const std::string& path, scene& result) {
     };
     auto default_material = std::make_shared<lambertian>(color(0.5, 0.5, 0.5));
 
-    // Reads an optional material name into name; returns nullptr if it is unknown.
-    auto read_material = [&](std::istringstream& in, std::string& name) -> std::shared_ptr<material> {
-        if (!(in >> name))
-            return default_material;
-        auto it = materials.find(name);
-        return it == materials.end() ? nullptr : it->second;
+    // Reads what may follow an object's geometry: an optional material name,
+    // then any transforms, applied in the order given. Returns false with a
+    // message in error on a problem.
+    auto read_tail = [&](std::istringstream& in, std::shared_ptr<material>& mat, transform& xform,
+                         bool& transformed, std::string& error) {
+        mat = default_material;
+        xform = transform();
+        transformed = false;
+
+        auto is_transform = [](const std::string& t) {
+            return t == "translate" || t == "scale" || t == "rotate"
+                || t == "rotate_x" || t == "rotate_y" || t == "rotate_z";
+        };
+
+        std::string token;
+        if (!(in >> token))
+            return true;
+        if (!is_transform(token)) {
+            auto it = materials.find(token);
+            if (it == materials.end()) {
+                error = "unknown material '" + token + "'";
+                return false;
+            }
+            mat = it->second;
+            if (!(in >> token))
+                return true;
+        }
+
+        do {
+            transform step;
+            bool ok = true;
+            if (token == "translate") {
+                vec3 d;
+                ok = bool(in >> d[0] >> d[1] >> d[2]);
+                step = transform::translate(d);
+            } else if (token == "rotate_x" || token == "rotate_y" || token == "rotate_z") {
+                double degrees;
+                ok = bool(in >> degrees);
+                vec3 axis(token == "rotate_x", token == "rotate_y", token == "rotate_z");
+                step = transform::rotate(degrees, axis);
+            } else if (token == "rotate") {
+                double degrees;
+                vec3 axis;
+                ok = bool(in >> degrees >> axis[0] >> axis[1] >> axis[2]) && axis.length_squared() > 0;
+                if (ok)
+                    step = transform::rotate(degrees, axis);
+            } else if (token == "scale") {
+                // "scale s" or "scale sx sy sz"
+                vec3 f;
+                ok = bool(in >> f[0]);
+                if (ok) {
+                    // A second number means all three must be there
+                    std::streampos mark = in.tellg();
+                    if (in >> f[1]) {
+                        ok = bool(in >> f[2]);
+                    } else {
+                        in.clear();
+                        in.seekg(mark);
+                        f = vec3(f[0], f[0], f[0]);
+                    }
+                }
+                ok = ok && f[0] != 0 && f[1] != 0 && f[2] != 0;
+                step = transform::scale(f);
+            } else {
+                error = "unexpected value '" + token + "' (expected a transform: translate, scale, "
+                        "rotate, rotate_x, rotate_y or rotate_z)";
+                return false;
+            }
+            if (!ok) {
+                error = "bad values for '" + token + "'";
+                return false;
+            }
+            xform = step.then_after(xform);
+            transformed = true;
+        } while (in >> token);
+        return true;
     };
 
     // Adds an object to the world, and to the lights if it emits.
-    auto add_object = [&](std::shared_ptr<hittable> object, const std::shared_ptr<material>& mat) {
+    auto add_object = [&](std::shared_ptr<hittable> object, const std::shared_ptr<material>& mat,
+                          const transform& xform, bool transformed, std::string& error) {
+        bool emissive = bool(std::dynamic_pointer_cast<diffuse_light>(mat));
+        if (transformed) {
+            if (emissive && !xform.is_similarity()) {
+                error = "lights can only be moved, rotated and scaled uniformly";
+                return false;
+            }
+            object = std::make_shared<instance>(object, xform);
+        }
         world.add(object);
-        if (std::dynamic_pointer_cast<diffuse_light>(mat))
+        if (emissive)
             lights.add(object);
+        return true;
     };
+
+    // Meshes already loaded, by file and default material, so repeated
+    // "mesh" lines share geometry and only add instances.
+    std::map<std::tuple<std::string, bool, const material*>, std::vector<obj_part>> mesh_cache;
 
     std::string line;
     int line_number = 0;
@@ -298,35 +402,72 @@ inline bool load_scene(const std::string& path, scene& result) {
                 return fail(line_number, "unknown material type '" + type + "'");
             }
             materials[name] = mat;
-        } else if (keyword == "sphere") {
-            double x, y, z, radius;
-            if (!(in >> x >> y >> z >> radius))
-                return fail(line_number, "expected 'sphere <x> <y> <z> <radius> [material]'");
-            std::string mat_name;
-            auto mat = read_material(in, mat_name);
-            if (!mat)
-                return fail(line_number, "unknown material '" + mat_name + "'");
-            add_object(std::make_shared<sphere>(point3(x, y, z), radius, mat), mat);
-        } else if (keyword == "quad") {
-            point3 Q; vec3 u, v;
-            if (!(in >> Q[0] >> Q[1] >> Q[2] >> u[0] >> u[1] >> u[2] >> v[0] >> v[1] >> v[2]))
-                return fail(line_number, "expected 'quad <Qx Qy Qz> <ux uy uz> <vx vy vz> [material]'");
-            if (cross(u, v).near_zero())
-                return fail(line_number, "quad edges must not be parallel");
-            std::string mat_name;
-            auto mat = read_material(in, mat_name);
-            if (!mat)
-                return fail(line_number, "unknown material '" + mat_name + "'");
-            add_object(std::make_shared<quad>(Q, u, v, mat), mat);
-        } else if (keyword == "box") {
-            point3 a, b;
-            if (!(in >> a[0] >> a[1] >> a[2] >> b[0] >> b[1] >> b[2]))
-                return fail(line_number, "expected 'box <x0 y0 z0> <x1 y1 z1> [material]'");
-            std::string mat_name;
-            auto mat = read_material(in, mat_name);
-            if (!mat)
-                return fail(line_number, "unknown material '" + mat_name + "'");
-            add_object(box(a, b, mat), mat);
+        } else if (keyword == "sphere" || keyword == "quad" || keyword == "box") {
+            std::shared_ptr<hittable> object;
+            std::shared_ptr<material> mat;
+            transform xform;
+            bool transformed;
+            std::string error;
+
+            if (keyword == "sphere") {
+                double x, y, z, radius;
+                if (!(in >> x >> y >> z >> radius) || radius == 0)
+                    return fail(line_number, "expected 'sphere <x> <y> <z> <non-zero radius> [material] [transforms]'");
+                if (!read_tail(in, mat, xform, transformed, error))
+                    return fail(line_number, error);
+                object = std::make_shared<sphere>(point3(x, y, z), radius, mat);
+            } else if (keyword == "quad") {
+                point3 Q; vec3 u, v;
+                if (!(in >> Q[0] >> Q[1] >> Q[2] >> u[0] >> u[1] >> u[2] >> v[0] >> v[1] >> v[2]))
+                    return fail(line_number, "expected 'quad <Qx Qy Qz> <ux uy uz> <vx vy vz> [material] [transforms]'");
+                if (cross(u, v).near_zero())
+                    return fail(line_number, "quad edges must not be parallel");
+                if (!read_tail(in, mat, xform, transformed, error))
+                    return fail(line_number, error);
+                object = std::make_shared<quad>(Q, u, v, mat);
+            } else {
+                point3 a, b;
+                if (!(in >> a[0] >> a[1] >> a[2] >> b[0] >> b[1] >> b[2]))
+                    return fail(line_number, "expected 'box <x0 y0 z0> <x1 y1 z1> [material] [transforms]'");
+                if (!read_tail(in, mat, xform, transformed, error))
+                    return fail(line_number, error);
+                object = box(a, b, mat);
+            }
+            if (!add_object(object, mat, xform, transformed, error))
+                return fail(line_number, error);
+        } else if (keyword == "mesh") {
+            std::string file, error;
+            std::shared_ptr<material> mat;
+            transform xform;
+            bool transformed;
+            if (!(in >> file))
+                return fail(line_number, "expected 'mesh <file.obj> [material] [transforms]'");
+            if (file[0] != '/')
+                file = scene_dir + file;
+            // An optional "smooth" comes before the usual material and transforms
+            std::string rest, first;
+            std::getline(in, rest);
+            std::istringstream peek(rest);
+            bool smooth = (peek >> first) && first == "smooth";
+            std::istringstream tail(smooth ? rest.substr(rest.find("smooth") + 6) : rest);
+            if (!read_tail(tail, mat, xform, transformed, error))
+                return fail(line_number, error);
+
+            auto key = std::make_tuple(file, smooth, mat.get());
+            auto cached = mesh_cache.find(key);
+            if (cached == mesh_cache.end()) {
+                std::vector<obj_part> parts;
+                if (!load_obj(file, materials, mat, smooth, parts, error))
+                    return fail(line_number, error);
+                size_t triangle_count = 0;
+                for (const auto& part : parts)
+                    triangle_count += part.geometry->size();
+                std::clog << "Loaded " << file << ": " << triangle_count << " triangles\n";
+                cached = mesh_cache.emplace(key, std::move(parts)).first;
+            }
+            for (const auto& part : cached->second)
+                if (!add_object(part.geometry, part.mat, xform, transformed, error))
+                    return fail(line_number, error);
         } else {
             return fail(line_number, "unknown keyword '" + keyword + "'");
         }
@@ -335,6 +476,11 @@ inline bool load_scene(const std::string& path, scene& result) {
         if (in >> extra)
             return fail(line_number, "unexpected value '" + extra + "'");
     }
+
+    if (world.empty())
+        return fail(line_number, "the scene has no objects");
+    if ((cam.lookfrom - cam.lookat).near_zero() || cross(cam.vup, cam.lookfrom - cam.lookat).near_zero())
+        return fail(line_number, "camera lookfrom must differ from lookat, and vup must not point along the view");
 
     return true;
 }

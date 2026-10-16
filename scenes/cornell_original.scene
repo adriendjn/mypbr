@@ -1,0 +1,19 @@
+# The original Cornell box geometry (measured data, with its rotated blocks)
+# and the original camera: 35 mm focal length on a 25 mm film.
+
+image_width  400
+aspect_ratio 1
+samples_per_pixel 256
+max_depth    64
+background   0 0 0
+tonemap      aces
+exposure     1
+
+camera lookfrom 278 273 -800  lookat 278 273 0  vup 0 1 0  vfov 39.3
+
+material white lambertian 0.725 0.71 0.68
+material red   lambertian 0.63 0.065 0.05
+material green lambertian 0.14 0.45 0.091
+material light emissive 17 12 4
+
+mesh ../models/cornell_box.obj white

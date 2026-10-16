@@ -1,0 +1,45 @@
+# The original Cornell box, from the measured data published by the Cornell
+# Program of Computer Graphics (https://www.graphics.cornell.edu/online/box/data.html).
+# Walls and light only, without the two blocks. Units are millimetres. usemtl names: white, red, green, light.
+
+g white
+usemtl white
+v 552.8 0 0
+v 0 0 0
+v 0 0 559.2
+v 549.6 0 559.2
+f 1 2 3 4
+v 556 548.8 0
+v 556 548.8 559.2
+v 0 548.8 559.2
+v 0 548.8 0
+f 5 6 7 8
+v 549.6 0 559.2
+v 0 0 559.2
+v 0 548.8 559.2
+v 556 548.8 559.2
+f 9 10 11 12
+
+g red
+usemtl red
+v 552.8 0 0
+v 549.6 0 559.2
+v 556 548.8 559.2
+v 556 548.8 0
+f 13 14 15 16
+
+g green
+usemtl green
+v 0 0 559.2
+v 0 0 0
+v 0 548.8 0
+v 0 548.8 559.2
+f 17 18 19 20
+
+g light
+usemtl light
+v 343 548.7 227
+v 343 548.7 332
+v 213 548.7 332
+v 213 548.7 227
+f 21 22 23 24

@@ -50,25 +50,35 @@ class sphere : public hittable{
             return true;
         }
 
+        // Samples the cone of directions the sphere subtends from outside it;
+        // from inside, samples points uniformly over its whole surface.
         double pdf_value(const point3& origin, const vec3& direction) const override {
-            // This method only works for stationary spheres seen from outside.
             hit_record rec;
             if (!this->hit(ray(origin, direction), interval(0.001, infinity), rec))
                 return 0;
 
+            double r = std::fabs(radius);
             auto dist_squared = (center - origin).length_squared();
-            auto cos_theta_max = std::sqrt(std::fmax(0.0, 1 - radius*radius/dist_squared));
-            auto solid_angle = 2*pi*(1-cos_theta_max);
+            if (dist_squared <= r*r) {
+                // Area density converted to solid angle: distance^2 / (cos * area)
+                auto hit_dist_squared = rec.t * rec.t * direction.length_squared();
+                auto cosine = std::fabs(dot(unit_vector(direction), (rec.p - center) / r));
+                return hit_dist_squared / (cosine * 4*pi*r*r);
+            }
 
+            auto cos_theta_max = std::sqrt(1 - r*r/dist_squared);
+            auto solid_angle = 2*pi*(1-cos_theta_max);
             return 1 / solid_angle;
         }
 
-        // Samples the cone of directions from origin that the sphere subtends.
         vec3 random(const point3& origin) const override {
+            double r = std::fabs(radius);
             vec3 direction = center - origin;
             auto distance_squared = direction.length_squared();
+            if (distance_squared <= r*r)
+                return center + r * random_unit_vector() - origin;
             onb uvw(direction);
-            return uvw.transform(random_to_sphere(std::fabs(radius), distance_squared));
+            return uvw.transform(random_to_sphere(r, distance_squared));
         }
 
     private:
@@ -91,7 +101,7 @@ class sphere : public hittable{
         static vec3 random_to_sphere(double radius, double distance_squared) {
             auto r1 = random_double();
             auto r2 = random_double();
-            auto z = 1 + r2*(std::sqrt(std::fmax(0.0, 1 - radius*radius/distance_squared)) - 1);
+            auto z = 1 + r2*(std::sqrt(1 - radius*radius/distance_squared) - 1);
 
             auto phi = 2*pi*r1;
             auto x = std::cos(phi) * std::sqrt(1-z*z);

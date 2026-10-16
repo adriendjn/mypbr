@@ -35,7 +35,7 @@ class bvh : public hittable{
             }
 
             nodes.reserve(2 * items.size());
-            build(items, 0, items.size());
+            build(items, 0, items.size(), 0);
 
             primitives.reserve(items.size());
             for (const auto& item : items)
@@ -43,6 +43,9 @@ class bvh : public hittable{
         }
 
         bool hit(const ray& r, interval ray_t, hit_record& rec) const override {
+            if (primitives.empty())
+                return false;
+
             const vec3& d = r.direction();
             vec3 inv_dir(1/d.x(), 1/d.y(), 1/d.z());
             bool dir_is_neg[3] = { inv_dir.x() < 0, inv_dir.y() < 0, inv_dir.z() < 0 };
@@ -107,8 +110,12 @@ class bvh : public hittable{
         static constexpr int bin_count = 16;
         static constexpr int max_leaf_size = 4;
 
+        // Deeper subtrees are split in the middle of the list, which bounds the
+        // depth (and so the traversal stack) even for very skewed inputs.
+        static constexpr int max_sah_depth = 64;
+
         // Builds the subtree over items[begin, end) and returns its node index.
-        int build(std::vector<build_item>& items, size_t begin, size_t end) {
+        int build(std::vector<build_item>& items, size_t begin, size_t end, int depth) {
             int index = int(nodes.size());
             nodes.push_back(node());
 
@@ -123,8 +130,8 @@ class bvh : public hittable{
             int axis = centroid_bounds.longest_axis();
             const interval& extent = centroid_bounds.axis_interval(axis);
 
-            if (count == 1 || extent.size() <= 0)
-                return make_leaf(index, begin, count, items, axis);
+            if (count == 1 || extent.size() <= 0 || depth >= max_sah_depth)
+                return make_leaf(index, begin, count, items, axis, depth);
 
             // Bin the centroids along the axis and evaluate the SAH cost of
             // splitting after each bin: cost ~ A_left * N_left + A_right * N_right
@@ -167,27 +174,28 @@ class bvh : public hittable{
             double leaf_cost = double(count);
             double split_cost = 0.125 + best_cost / bounds.surface_area();
             if (best_split < 0 || (count <= max_leaf_size && leaf_cost <= split_cost))
-                return make_leaf(index, begin, count, items, axis);
+                return make_leaf(index, begin, count, items, axis, depth);
 
             auto mid_it = std::partition(items.begin() + begin, items.begin() + end,
                 [&](const build_item& item) { return bin_of(item.centroid) <= best_split; });
             size_t mid = size_t(mid_it - items.begin());
 
             nodes[index].axis = axis;
-            build(items, begin, mid);  // Left child lands at index + 1
-            int right = build(items, mid, end);
+            build(items, begin, mid, depth + 1);  // Left child lands at index + 1
+            int right = build(items, mid, end, depth + 1);
             nodes[index].offset = right;
             return index;
         }
 
-        int make_leaf(int index, size_t begin, size_t count, std::vector<build_item>& items, int axis) {
-            // Too many primitives with identical centroids can't be separated
-            // by centroid; split them in the middle of the list instead.
+        int make_leaf(int index, size_t begin, size_t count, std::vector<build_item>& items, int axis,
+                      int depth) {
+            // Too many primitives with identical centroids (or too deep a
+            // tree) for a SAH split; split them in the middle of the list.
             if (count > size_t(max_leaf_size)) {
                 size_t mid = begin + count / 2;
                 nodes[index].axis = axis;
-                build(items, begin, mid);
-                int right = build(items, mid, begin + count);
+                build(items, begin, mid, depth + 1);
+                int right = build(items, mid, begin + count, depth + 1);
                 nodes[index].offset = right;
                 return index;
             }
