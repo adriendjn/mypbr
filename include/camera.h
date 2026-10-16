@@ -6,6 +6,7 @@
 #include "hittable_list.h"
 #include "material.h"
 
+#include <functional>
 #include <iostream>
 #include <vector>
 
@@ -29,21 +30,36 @@ class camera{
 
         int height() const { return image_height; }
 
+        // Called during a progressive render with the number of samples per
+        // pixel done so far and the image averaged over them.
+        using pass_callback = std::function<void(int, const std::vector<color>&)>;
+
         // Renders the world and returns the linear radiance of every pixel,
         // row by row from the top left. lights are the emitters to sample
         // directly (next event estimation); they must also be part of world.
-        std::vector<color> render(const hittable& world, const hittable_list& lights) {
+        //
+        // Rendering is progressive: each pass adds one sample to every pixel.
+        // If save_every > 0, on_pass is called every save_every passes so a
+        // long render can be stopped early with a usable image.
+        std::vector<color> render(const hittable& world, const hittable_list& lights,
+                                  int save_every = 0, const pass_callback& on_pass = nullptr) {
             initialize();
 
-            std::vector<color> pixels(size_t(image_width) * image_height);
+            size_t pixel_count = size_t(image_width) * image_height;
+            std::vector<color> sum(pixel_count);
 
-            for (int j = 0; j < image_height; j++){
-                std::clog << "\rScanlines remaining: " << (image_height - j) << ' ' << std::flush;
-                for (int i = 0; i < image_width; i++)
-                    pixels[size_t(j) * image_width + i] = render_pixel(i, j, world, lights);
+            for (int pass = 0; pass < samples_per_pixel; pass++) {
+                std::clog << "\rPass " << (pass + 1) << '/' << samples_per_pixel << ' ' << std::flush;
+                for (int j = 0; j < image_height; j++)
+                    for (int i = 0; i < image_width; i++)
+                        sum[size_t(j) * image_width + i] += render_sample(i, j, pass, world, lights);
+
+                int done = pass + 1;
+                if (on_pass && save_every > 0 && done % save_every == 0 && done < samples_per_pixel)
+                    on_pass(done, average(sum, done));
             }
             std::clog << "\rDone.                   \n";
-            return pixels;
+            return average(sum, samples_per_pixel);
         }
 
         // Computes the image height and camera basis; render() calls it.
@@ -51,7 +67,6 @@ class camera{
             image_height = int(image_width / aspect_ratio);
             image_height = (image_height < 1) ? 1 : image_height;
 
-            pixel_samples_scale = 1.0 / samples_per_pixel;
             sqrt_spp = int(std::sqrt(samples_per_pixel));
             recip_sqrt_spp = 1.0 / sqrt_spp;
 
@@ -88,7 +103,6 @@ class camera{
 
     private:
         int    image_height;   // Rendered image height
-        double pixel_samples_scale;  // Color scale factor for a sum of pixel samples
         int    sqrt_spp;             // Square root of number of samples per pixel
         double recip_sqrt_spp;       // 1 / sqrt_spp
         point3 center;         // Camera center
@@ -99,17 +113,27 @@ class camera{
         vec3   defocus_disk_u; // Defocus disk horizontal radius
         vec3   defocus_disk_v; // Defocus disk vertical radius
 
-        // Averages samples_per_pixel radiance estimates for pixel i, j. The
-        // first sqrt_spp^2 samples are stratified on a jittered grid inside the
-        // pixel; any remainder is placed uniformly at random.
-        color render_pixel(int i, int j, const hittable& world, const hittable_list& lights) const {
-            color pixel_color(0, 0, 0);
-            for (int s_j = 0; s_j < sqrt_spp; s_j++)
-                for (int s_i = 0; s_i < sqrt_spp; s_i++)
-                    pixel_color += sample_radiance(get_ray(i, j, sample_square_stratified(s_i, s_j)), world, lights);
-            for (int extra = sqrt_spp*sqrt_spp; extra < samples_per_pixel; extra++)
-                pixel_color += sample_radiance(get_ray(i, j, sample_square()), world, lights);
-            return pixel_samples_scale * pixel_color;
+        // One radiance sample for pixel i, j. Across the passes, each pixel's
+        // first sqrt_spp^2 samples visit every cell of a sqrt_spp x sqrt_spp grid
+        // once (jittered within the cell); the cell order is offset per pixel
+        // so partial images aren't biased toward one corner. Any remaining
+        // samples are placed uniformly at random.
+        color render_sample(int i, int j, int pass, const hittable& world, const hittable_list& lights) const {
+            int strata = sqrt_spp * sqrt_spp;
+            if (pass >= strata)
+                return sample_radiance(get_ray(i, j, sample_square()), world, lights);
+
+            int cell = (pass + i * 7919 + j * 104729) % strata;
+            auto offset = sample_square_stratified(cell % sqrt_spp, cell / sqrt_spp);
+            return sample_radiance(get_ray(i, j, offset), world, lights);
+        }
+
+        static std::vector<color> average(const std::vector<color>& sum, int samples) {
+            std::vector<color> image(sum.size());
+            double scale = 1.0 / samples;
+            for (size_t k = 0; k < sum.size(); k++)
+                image[k] = scale * sum[k];
+            return image;
         }
 
         // One path's radiance, with NaN or infinite estimates dropped (counted

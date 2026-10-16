@@ -1,35 +1,59 @@
 #include <rtweekend.h>
-#include <camera.h>
-#include <hittable_list.h>
 #include <image_io.h>
 #include <scene.h>
 
+#include <cstdlib>
 #include <iostream>
 #include <string>
+#include <vector>
+
+static int usage(const char* program) {
+    std::cerr << "Usage: " << program << " <scene file> [-o out.png|.ppm|.hdr|.pfm]... [--save-every N]\n"
+              << "       -o may be repeated to write several formats; without -o, a PPM\n"
+              << "       image is written to stdout. --save-every N rewrites the outputs\n"
+              << "       every N samples per pixel, so a long render can be stopped early.\n";
+    return 1;
+}
 
 int main(int argc, char* argv[]) {
-    std::string scene_path, output_path;
-    bool bad_args = false;
+    std::string scene_path;
+    std::vector<std::string> outputs;
+    int save_every = 0;
+
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
-        if (arg == "-o" && i + 1 < argc)
-            output_path = argv[++i];
-        else if (scene_path.empty() && arg[0] != '-')
+        if (arg == "-o" && i + 1 < argc) {
+            outputs.push_back(argv[++i]);
+            if (!is_supported_image(outputs.back()))
+                return usage(argv[0]);
+        } else if (arg == "--save-every" && i + 1 < argc) {
+            save_every = std::atoi(argv[++i]);
+            if (save_every < 1)
+                return usage(argv[0]);
+        } else if (scene_path.empty() && arg[0] != '-') {
             scene_path = arg;
-        else
-            bad_args = true;
+        } else {
+            return usage(argv[0]);
+        }
     }
-    if (bad_args || scene_path.empty()) {
-        std::cerr << "Usage: " << argv[0] << " <scene file> [-o out.png|out.ppm]\n"
-                  << "       Without -o, a PPM image is written to stdout.\n";
-        return 1;
-    }
+    if (scene_path.empty() || (save_every > 0 && outputs.empty()))
+        return usage(argv[0]);
+    if (outputs.empty())
+        outputs.push_back("");  // stdout
 
-    hittable_list world, lights;
-    camera cam;
-    if (!load_scene(scene_path, world, lights, cam))
+    scene sc;
+    if (!load_scene(scene_path, sc))
         return 1;
 
-    auto pixels = cam.render(world, lights);
-    return write_image(output_path, cam.image_width, cam.height(), pixels) ? 0 : 1;
+    auto& cam = sc.cam;
+    auto save = [&](const std::vector<color>& pixels) {
+        bool ok = true;
+        for (const auto& path : outputs)
+            ok &= write_image(path, cam.image_width, cam.height(), pixels, sc.display);
+        return ok;
+    };
+
+    auto pixels = cam.render(sc.world, sc.lights, save_every,
+                             [&](int, const std::vector<color>& partial) { save(partial); });
+    return save(pixels) ? 0 : 1;
 }

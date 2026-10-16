@@ -2,3 +2,5 @@ build/
 .cache/
 *.ppm
 /*.png
+/*.hdr
+/*.pfm

@@ -6,6 +6,7 @@
 #include "material.h"
 #include "quad.h"
 #include "sphere.h"
+#include "tonemap.h"
 
 #include <fstream>
 #include <iostream>
@@ -14,7 +15,16 @@
 #include <sstream>
 #include <string>
 
-// Loads a scene description into a world and a camera.
+// Everything a scene file describes.
+class scene{
+    public:
+        hittable_list    world;
+        hittable_list    lights;   // Emissive objects, also part of world
+        camera           cam;
+        display_settings display;  // How radiance becomes PNG/PPM pixels
+};
+
+// Loads a scene description.
 //
 // The file is read line by line. Each line starts with a keyword followed by
 // its values; blank lines and anything after '#' are ignored:
@@ -37,6 +47,8 @@
 //   material lamp   emissive 15 15 15         # area light, radiance r g b
 //
 //   background   0 0 0         # constant background instead of the sky gradient
+//   exposure     0             # stops; display images are scaled by 2^exposure
+//   tonemap      aces          # none (clamp, the default), reinhard or aces
 //
 //   sphere       0 0 -1  0.5  glass   # center x y z, radius, [material]
 //   quad   Qx Qy Qz  ux uy uz  vx vy vz  [material]   # corner, two edges
@@ -49,7 +61,11 @@
 // renderer can sample it directly.
 //
 // Returns false and prints the offending line on std::cerr on error.
-inline bool load_scene(const std::string& path, hittable_list& world, hittable_list& lights, camera& cam) {
+inline bool load_scene(const std::string& path, scene& result) {
+    auto& world = result.world;
+    auto& lights = result.lights;
+    auto& cam = result.cam;
+
     std::ifstream file(path);
     if (!file) {
         std::cerr << "Error: cannot open scene file '" << path << "'\n";
@@ -144,6 +160,13 @@ inline bool load_scene(const std::string& path, hittable_list& world, hittable_l
                 return fail(line_number, "expected 'background <r> <g> <b>'");
             cam.use_sky = false;
             cam.background = color(r, g, b);
+        } else if (keyword == "exposure") {
+            if (!(in >> result.display.exposure))
+                return fail(line_number, "expected 'exposure <stops>'");
+        } else if (keyword == "tonemap") {
+            std::string name;
+            if (!(in >> name) || !result.display.set_tonemapper(name))
+                return fail(line_number, "expected 'tonemap none|reinhard|aces'");
         } else if (keyword == "material") {
             std::string name, type;
             if (!(in >> name >> type))
