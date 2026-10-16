@@ -19,6 +19,7 @@
 //   image_width  800
 //   aspect_ratio 16/9          # or a plain number, e.g. 1.5
 //   samples_per_pixel 100      # random samples per pixel (antialiasing)
+//   max_depth    50            # maximum number of ray bounces
 //   sphere       0 0 -1  0.5   # center x y z, radius
 //
 // Returns false and prints the offending line on std::cerr on error.
@@ -67,6 +68,9 @@ inline bool load_scene(const std::string& path, hittable_list& world, camera& ca
         } else if (keyword == "samples_per_pixel") {
             if (!(in >> cam.samples_per_pixel) || cam.samples_per_pixel < 1)
                 return fail(line_number, "expected 'samples_per_pixel <positive integer>'");
+        } else if (keyword == "max_depth") {
+            if (!(in >> cam.max_depth) || cam.max_depth < 1)
+                return fail(line_number, "expected 'max_depth <positive integer>'");
         } else if (keyword == "sphere") {
             double x, y, z, radius;
             if (!(in >> x >> y >> z >> radius))

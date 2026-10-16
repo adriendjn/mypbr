@@ -1,9 +1,11 @@
-# Default scene: one sphere in front of the camera
+# Default scene: a sphere resting on a large ground sphere
 
 # Camera
 image_width  800
 aspect_ratio 16/9
 samples_per_pixel 100
+max_depth    50
 
 # Objects: sphere <center x> <center y> <center z> <radius>
 sphere 0 0 -1  0.5
+sphere 0 -100.5 -1  100   # ground
