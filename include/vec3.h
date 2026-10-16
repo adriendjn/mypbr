@@ -122,6 +122,19 @@ inline vec3 random_unit_vector() {
     }
 }
 
+// Cosine-weighted direction on the hemisphere around +z.
+inline vec3 random_cosine_direction() {
+    auto r1 = random_double();
+    auto r2 = random_double();
+
+    auto phi = 2*pi*r1;
+    auto x = std::cos(phi) * std::sqrt(r2);
+    auto y = std::sin(phi) * std::sqrt(r2);
+    auto z = std::sqrt(1-r2);
+
+    return vec3(x, y, z);
+}
+
 // Uniformly distributed point inside the unit disk in the xy plane.
 inline vec3 random_in_unit_disk() {
     while (true) {

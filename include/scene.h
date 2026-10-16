@@ -22,7 +22,7 @@
 //   image_width  800
 //   aspect_ratio 16/9          # or a plain number, e.g. 1.5
 //   samples_per_pixel 100      # random samples per pixel (antialiasing)
-//   max_depth    50            # maximum number of ray bounces
+//   max_depth    50            # hard cap on bounces (Russian roulette ends most paths earlier)
 //
 //   camera lookfrom 13 2 3  lookat 0 0 0  vup 0 1 0  vfov 20
 //   aperture     0.6           # defocus angle in degrees (0 = pinhole)
@@ -45,8 +45,11 @@
 // Materials must be defined before they are used. A sphere without a
 // material name gets a default grey Lambertian.
 //
+// Every object with an emissive material is also added to lights, so the
+// renderer can sample it directly.
+//
 // Returns false and prints the offending line on std::cerr on error.
-inline bool load_scene(const std::string& path, hittable_list& world, camera& cam) {
+inline bool load_scene(const std::string& path, hittable_list& world, hittable_list& lights, camera& cam) {
     std::ifstream file(path);
     if (!file) {
         std::cerr << "Error: cannot open scene file '" << path << "'\n";
@@ -67,6 +70,13 @@ inline bool load_scene(const std::string& path, hittable_list& world, camera& ca
             return default_material;
         auto it = materials.find(name);
         return it == materials.end() ? nullptr : it->second;
+    };
+
+    // Adds an object to the world, and to the lights if it emits.
+    auto add_object = [&](std::shared_ptr<hittable> object, const std::shared_ptr<material>& mat) {
+        world.add(object);
+        if (std::dynamic_pointer_cast<diffuse_light>(mat))
+            lights.add(object);
     };
 
     std::string line;
@@ -172,7 +182,7 @@ inline bool load_scene(const std::string& path, hittable_list& world, camera& ca
             auto mat = read_material(in, mat_name);
             if (!mat)
                 return fail(line_number, "unknown material '" + mat_name + "'");
-            world.add(std::make_shared<sphere>(point3(x, y, z), radius, mat));
+            add_object(std::make_shared<sphere>(point3(x, y, z), radius, mat), mat);
         } else if (keyword == "quad") {
             point3 Q; vec3 u, v;
             if (!(in >> Q[0] >> Q[1] >> Q[2] >> u[0] >> u[1] >> u[2] >> v[0] >> v[1] >> v[2]))
@@ -183,7 +193,7 @@ inline bool load_scene(const std::string& path, hittable_list& world, camera& ca
             auto mat = read_material(in, mat_name);
             if (!mat)
                 return fail(line_number, "unknown material '" + mat_name + "'");
-            world.add(std::make_shared<quad>(Q, u, v, mat));
+            add_object(std::make_shared<quad>(Q, u, v, mat), mat);
         } else if (keyword == "box") {
             point3 a, b;
             if (!(in >> a[0] >> a[1] >> a[2] >> b[0] >> b[1] >> b[2]))
@@ -192,7 +202,7 @@ inline bool load_scene(const std::string& path, hittable_list& world, camera& ca
             auto mat = read_material(in, mat_name);
             if (!mat)
                 return fail(line_number, "unknown material '" + mat_name + "'");
-            world.add(box(a, b, mat));
+            add_object(box(a, b, mat), mat);
         } else {
             return fail(line_number, "unknown keyword '" + keyword + "'");
         }

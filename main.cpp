@@ -25,11 +25,11 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    hittable_list world;
+    hittable_list world, lights;
     camera cam;
-    if (!load_scene(scene_path, world, cam))
+    if (!load_scene(scene_path, world, lights, cam))
         return 1;
 
-    auto pixels = cam.render(world);
+    auto pixels = cam.render(world, lights);
     return write_image(output_path, cam.image_width, cam.height(), pixels) ? 0 : 1;
 }

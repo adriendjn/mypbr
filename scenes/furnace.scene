@@ -1,0 +1,12 @@
+# White furnace test: an all-white diffuse sphere in a uniform white
+# environment. A correct integrator renders a uniformly white image (the
+# sphere disappears). tests/furnace_test.cpp checks this automatically.
+
+image_width  200
+aspect_ratio 1
+samples_per_pixel 16
+max_depth    100
+background   1 1 1
+
+material white lambertian 1 1 1
+sphere 0 0 -1  0.5  white

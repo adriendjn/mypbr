@@ -3,6 +3,7 @@
 
 #include "hittable.h"
 
+#include <algorithm>
 #include <memory>
 #include <vector>
 
@@ -34,6 +35,27 @@ class hittable_list : public hittable{
             }
 
             return hit_anything;
+        }
+
+        bool empty() const { return objects.empty(); }
+
+        // Sampling picks one object uniformly, so the density is the average.
+        double pdf_value(const point3& origin, const vec3& direction) const override {
+            if (objects.empty())
+                return 0.0;
+            auto weight = 1.0 / objects.size();
+            auto sum = 0.0;
+
+            for (const auto& object : objects)
+                sum += weight * object->pdf_value(origin, direction);
+
+            return sum;
+        }
+
+        vec3 random(const point3& origin) const override {
+            auto int_size = int(objects.size());
+            auto index = std::min(int(random_double() * int_size), int_size - 1);
+            return objects[index]->random(origin);
         }
 };
 

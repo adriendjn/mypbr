@@ -29,6 +29,19 @@ class hittable{
         virtual ~hittable() = default;
 
         virtual bool hit(const ray& r, interval ray_t, hit_record& rec) const = 0;
+
+        // Density (solid angle) of sampling direction from origin with random().
+        // Only needed for objects used as lights.
+        virtual double pdf_value(const point3& origin, const vec3& direction) const {
+            (void)origin; (void)direction;
+            return 0.0;
+        }
+
+        // Returns a direction from origin towards a random point on the object.
+        virtual vec3 random(const point3& origin) const {
+            (void)origin;
+            return vec3(1, 0, 0);
+        }
 };
 
 #endif
