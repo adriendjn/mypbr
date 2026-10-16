@@ -2,6 +2,7 @@
 #define HITTABLE_H
 
 #include "ray.h"
+#include "aabb.h"
 #include "interval.h"
 
 #include <memory>
@@ -12,7 +13,8 @@ class hit_record{
     public:
         point3 p;
         vec3 normal;
-        std::shared_ptr<material> mat;
+        const material* mat;  // Owned by the object that was hit; a raw pointer avoids
+                              // atomic reference counting on every hit across threads
         double t;
         bool front_face;
 
@@ -29,6 +31,8 @@ class hittable{
         virtual ~hittable() = default;
 
         virtual bool hit(const ray& r, interval ray_t, hit_record& rec) const = 0;
+
+        virtual aabb bounding_box() const = 0;
 
         // Density (solid angle) of sampling direction from origin with random().
         // Only needed for objects used as lights.

@@ -14,10 +14,11 @@ class hittable_list : public hittable{
         hittable_list() {}
         hittable_list(std::shared_ptr<hittable> object) { add(object); }
 
-        void clear() { objects.clear(); }
+        void clear() { objects.clear(); bbox = aabb(); }
 
         void add(std::shared_ptr<hittable> object) {
             objects.push_back(object);
+            bbox = aabb(bbox, object->bounding_box());
         }
 
         // Returns the closest hit among all objects
@@ -36,6 +37,8 @@ class hittable_list : public hittable{
 
             return hit_anything;
         }
+
+        aabb bounding_box() const override { return bbox; }
 
         bool empty() const { return objects.empty(); }
 
@@ -57,6 +60,9 @@ class hittable_list : public hittable{
             auto index = std::min(int(random_double() * int_size), int_size - 1);
             return objects[index]->random(origin);
         }
+
+    private:
+        aabb bbox;
 };
 
 #endif

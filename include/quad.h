@@ -18,7 +18,14 @@ class quad : public hittable{
             D = dot(normal, Q);
             w = n / dot(n, n);
             area = n.length();
+
+            // Compute the bounding box of all four vertices.
+            auto bbox_diagonal1 = aabb(Q, Q + u + v);
+            auto bbox_diagonal2 = aabb(Q + u, Q + v);
+            bbox = aabb(bbox_diagonal1, bbox_diagonal2);
         }
+
+        aabb bounding_box() const override { return bbox; }
 
         bool hit(const ray& r, interval ray_t, hit_record& rec) const override {
             auto denom = dot(normal, r.direction());
@@ -44,7 +51,7 @@ class quad : public hittable{
 
             rec.t = t;
             rec.p = intersection;
-            rec.mat = mat;
+            rec.mat = mat.get();
             rec.set_face_normal(r, normal);
 
             return true;
@@ -75,6 +82,7 @@ class quad : public hittable{
         vec3 normal;
         double D;     // Plane equation: dot(normal, p) = D
         double area;
+        aabb bbox;
 };
 
 // Returns the 3D box (six sides) that contains the two opposite vertices a & b.

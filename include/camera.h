@@ -6,8 +6,11 @@
 #include "hittable_list.h"
 #include "material.h"
 
+#include <algorithm>
+#include <atomic>
 #include <functional>
 #include <iostream>
+#include <thread>
 #include <vector>
 
 class camera{
@@ -27,6 +30,8 @@ class camera{
 
         double defocus_angle = 0;  // Variation angle of rays through each pixel
         double focus_dist    = 10; // Distance from camera lookfrom point to plane of perfect focus
+
+        int    threads = 0;  // Worker threads; 0 uses every hardware thread
 
         int height() const { return image_height; }
 
@@ -48,11 +53,12 @@ class camera{
             size_t pixel_count = size_t(image_width) * image_height;
             std::vector<color> sum(pixel_count);
 
+            int worker_count = threads > 0 ? threads : int(std::thread::hardware_concurrency());
+            worker_count = std::max(worker_count, 1);
+
             for (int pass = 0; pass < samples_per_pixel; pass++) {
                 std::clog << "\rPass " << (pass + 1) << '/' << samples_per_pixel << ' ' << std::flush;
-                for (int j = 0; j < image_height; j++)
-                    for (int i = 0; i < image_width; i++)
-                        sum[size_t(j) * image_width + i] += render_sample(i, j, pass, world, lights);
+                render_pass(pass, worker_count, world, lights, sum);
 
                 int done = pass + 1;
                 if (on_pass && save_every > 0 && done % save_every == 0 && done < samples_per_pixel)
@@ -60,6 +66,40 @@ class camera{
             }
             std::clog << "\rDone.                   \n";
             return average(sum, samples_per_pixel);
+        }
+
+        // Adds one sample to every pixel of sum. The image is cut into square
+        // tiles that worker threads claim from a shared atomic counter; each
+        // pixel belongs to one tile, so workers never write the same pixel.
+        void render_pass(int pass, int worker_count, const hittable& world, const hittable_list& lights,
+                         std::vector<color>& sum) const {
+            const int tile_size = 16;
+            int tiles_x = (image_width + tile_size - 1) / tile_size;
+            int tiles_y = (image_height + tile_size - 1) / tile_size;
+            int tile_count = tiles_x * tiles_y;
+            std::atomic<int> next_tile{0};
+
+            auto worker = [&]() {
+                while (true) {
+                    int tile = next_tile.fetch_add(1);
+                    if (tile >= tile_count)
+                        return;
+                    int i0 = (tile % tiles_x) * tile_size;
+                    int j0 = (tile / tiles_x) * tile_size;
+                    int i1 = std::min(i0 + tile_size, image_width);
+                    int j1 = std::min(j0 + tile_size, image_height);
+                    for (int j = j0; j < j1; j++)
+                        for (int i = i0; i < i1; i++)
+                            sum[size_t(j) * image_width + i] += render_sample(i, j, pass, world, lights);
+                }
+            };
+
+            std::vector<std::thread> pool;
+            for (int k = 1; k < std::min(worker_count, tile_count); k++)
+                pool.emplace_back(worker);
+            worker();  // The calling thread works too
+            for (auto& t : pool)
+                t.join();
         }
 
         // Computes the image height and camera basis; render() calls it.
