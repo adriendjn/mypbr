@@ -3,6 +3,7 @@
 
 #include "hittable.h"
 #include "color3.h"
+#include "material.h"
 
 #include <iostream>
 
@@ -90,9 +91,11 @@ class camera{
             hit_record rec;
             // Start at 0.001 so a bounced ray doesn't re-hit its own surface (shadow acne)
             if (world.hit(r, interval(0.001, infinity), rec)) {
-                // Lambertian: normal + unit vector is cosine-distributed around the normal
-                vec3 direction = rec.normal + random_unit_vector();
-                return 0.5 * ray_color(ray(rec.p, direction), depth - 1, world);
+                ray scattered;
+                color attenuation;
+                if (rec.mat->scatter(r, rec, attenuation, scattered))
+                    return attenuation * ray_color(scattered, depth - 1, world);
+                return color(0, 0, 0);
             }
 
             vec3 unit_direction = unit_vector(r.direction());

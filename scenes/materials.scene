@@ -1,0 +1,20 @@
+# The three-sphere materials scene from "Ray Tracing in One Weekend"
+# (chapter 11): a glass sphere with an air bubble, a matte blue sphere and
+# fuzzy gold metal on a yellow-green ground.
+
+image_width  800
+aspect_ratio 16/9
+samples_per_pixel 100
+max_depth    50
+
+material ground lambertian 0.8 0.8 0.0
+material center lambertian 0.1 0.2 0.5
+material glass  dielectric 1.5
+material bubble dielectric 0.6666667   # air inside glass: 1.0 / 1.5
+material gold   metal 0.8 0.6 0.2 1.0
+
+sphere  0    -100.5 -1    100   ground
+sphere  0     0     -1.2  0.5   center
+sphere -1     0     -1    0.5   glass
+sphere -1     0     -1    0.4   bubble
+sphere  1     0     -1    0.5   gold

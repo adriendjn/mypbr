@@ -1,0 +1,18 @@
+# Hollow glass test: a glass shell made from an outer sphere and an inner
+# sphere with a negative radius (inward-facing normals).
+
+image_width  800
+aspect_ratio 16/9
+samples_per_pixel 100
+max_depth    50
+
+material ground lambertian 0.8 0.8 0.0
+material center lambertian 0.1 0.2 0.5
+material glass  dielectric 1.5
+material steel  metal 0.8 0.8 0.8 0.0
+
+sphere  0    -100.5 -1    100   ground
+sphere  0     0     -1    0.5   center
+sphere -1     0     -1    0.5   glass
+sphere -1     0     -1   -0.45  glass
+sphere  1     0     -1    0.5   steel
