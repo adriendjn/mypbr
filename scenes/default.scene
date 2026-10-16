@@ -3,6 +3,7 @@
 # Camera
 image_width  800
 aspect_ratio 16/9
+samples_per_pixel 100
 
 # Objects: sphere <center x> <center y> <center z> <radius>
 sphere 0 0 -1  0.5
