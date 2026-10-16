@@ -68,20 +68,22 @@ class hittable_pdf : public pdf{
         point3 origin;
 };
 
-// Picks either of two pdfs with probability one half each.
+// Picks p0 with probability weight0 (one half by default), otherwise p1.
 class mixture_pdf : public pdf{
     public:
-        mixture_pdf(std::shared_ptr<pdf> p0, std::shared_ptr<pdf> p1) {
+        mixture_pdf(std::shared_ptr<pdf> p0, std::shared_ptr<pdf> p1, double weight0 = 0.5)
+            : weight0(weight0)
+        {
             p[0] = p0;
             p[1] = p1;
         }
 
         double value(const vec3& direction) const override {
-            return 0.5 * p[0]->value(direction) + 0.5 * p[1]->value(direction);
+            return weight0 * p[0]->value(direction) + (1 - weight0) * p[1]->value(direction);
         }
 
         vec3 generate() const override {
-            if (random_double() < 0.5)
+            if (random_double() < weight0)
                 return p[0]->generate();
             else
                 return p[1]->generate();
@@ -89,6 +91,7 @@ class mixture_pdf : public pdf{
 
     private:
         std::shared_ptr<pdf> p[2];
+        double weight0;
 };
 
 #endif

@@ -1,0 +1,64 @@
+# Roughness rows: each row goes from roughness 0 (left) to 1 (right).
+#   back:   gold metal (GGX)
+#   middle: red plastic (principled, dielectric base)
+#   front:  rough glass (GGX transmission)
+# Lit by a soft sky, a large area light and a small bright sphere.
+
+image_width  900
+aspect_ratio 3/2
+samples_per_pixel 256
+max_depth    32
+tonemap      aces
+
+camera lookfrom 0 6.5 11  lookat 0 0.2 0.2  vup 0 1 0  vfov 30
+
+texture  floor checker 0.5  0.25 0.25 0.27  0.6 0.6 0.62
+material floor lambertian texture floor
+material lamp  emissive 6 6 6
+material bulb  emissive 60 55 50
+
+sphere 0 -1000 0  1000  floor
+quad -3 6 -1   6 0 0   0 0 3   lamp      # area light above, facing down
+sphere 6 3 4  0.3  bulb
+
+material gold0  metal 1.0 0.78 0.34 0
+material paint0 principled color 0.7 0.05 0.04 roughness 0
+material glass0 dielectric 1.5 roughness 0
+sphere -3.75 0.6 -2.2  0.6  gold0
+sphere -3.75 0.6  0.0  0.6  paint0
+sphere -3.75 0.6  2.2  0.6  glass0
+
+material gold1  metal 1.0 0.78 0.34 0.2
+material paint1 principled color 0.7 0.05 0.04 roughness 0.2
+material glass1 dielectric 1.5 roughness 0.2
+sphere -2.25 0.6 -2.2  0.6  gold1
+sphere -2.25 0.6  0.0  0.6  paint1
+sphere -2.25 0.6  2.2  0.6  glass1
+
+material gold2  metal 1.0 0.78 0.34 0.4
+material paint2 principled color 0.7 0.05 0.04 roughness 0.4
+material glass2 dielectric 1.5 roughness 0.4
+sphere -0.75 0.6 -2.2  0.6  gold2
+sphere -0.75 0.6  0.0  0.6  paint2
+sphere -0.75 0.6  2.2  0.6  glass2
+
+material gold3  metal 1.0 0.78 0.34 0.6
+material paint3 principled color 0.7 0.05 0.04 roughness 0.6
+material glass3 dielectric 1.5 roughness 0.6
+sphere 0.75 0.6 -2.2  0.6  gold3
+sphere 0.75 0.6  0.0  0.6  paint3
+sphere 0.75 0.6  2.2  0.6  glass3
+
+material gold4  metal 1.0 0.78 0.34 0.8
+material paint4 principled color 0.7 0.05 0.04 roughness 0.8
+material glass4 dielectric 1.5 roughness 0.8
+sphere 2.25 0.6 -2.2  0.6  gold4
+sphere 2.25 0.6  0.0  0.6  paint4
+sphere 2.25 0.6  2.2  0.6  glass4
+
+material gold5  metal 1.0 0.78 0.34 1.0
+material paint5 principled color 0.7 0.05 0.04 roughness 1.0
+material glass5 dielectric 1.5 roughness 1.0
+sphere 3.75 0.6 -2.2  0.6  gold5
+sphere 3.75 0.6  0.0  0.6  paint5
+sphere 3.75 0.6  2.2  0.6  glass5

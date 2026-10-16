@@ -3,6 +3,7 @@
 
 #include <hittable_list.h>
 #include <material.h>
+#include <microfacet.h>
 #include <pdf.h>
 #include <quad.h>
 #include <sphere.h>
@@ -37,6 +38,34 @@ static double cap_solid_angle(const pdf& p, const vec3& axis, double cos_max) {
             sum += 1 / v;
     }
     return sum / n;
+}
+
+// Integral of p estimated with defensive importance sampling: directions are
+// drawn half from the uniform sphere, half from p itself, so sharply peaked
+// pdfs (low roughness) are still integrated with little noise. Invalid
+// (zero) samples from p contribute nothing.
+static double integral_defensive(const pdf& p) {
+    const int n = 400000;
+    sphere_pdf uniform;
+    double sum = 0;
+    for (int i = 0; i < n; i++) {
+        vec3 d = random_double() < 0.5 ? uniform.generate() : p.generate();
+        if (d.length_squared() == 0)
+            continue;
+        sum += p.value(d) / (0.5 * uniform.value(d) + 0.5 * p.value(d));
+    }
+    return sum / n;
+}
+
+// Fraction of generate() calls that produce a valid (non-zero) direction.
+// The pdf integrates to this fraction when value() matches generate().
+static double valid_fraction(const pdf& p) {
+    const int n = 200000;
+    int valid = 0;
+    for (int i = 0; i < n; i++)
+        if (p.generate().length_squared() > 0)
+            valid++;
+    return double(valid) / n;
 }
 
 static bool check(const std::string& name, double got, double want, double tolerance) {
@@ -74,6 +103,22 @@ int main() {
     mixture_pdf mix(p0, p1);
     ok &= check("mixture_pdf integral", integral(mix), 1.0, 0.02);
     ok &= check("mixture_pdf sampling", cap_solid_angle(mix, vec3(0, 1, 0), 0.0), 2 * pi, 0.05);
+
+    vec3 normal(0, 0, 1);
+    for (double roughness : {0.2, 0.6, 1.0}) {
+        auto r = std::to_string(roughness).substr(0, 3);
+        double alpha = roughness_to_alpha(roughness);
+        for (vec3 wo : {vec3(0, 0, 1), unit_vector(vec3(1, 0, 1)), unit_vector(vec3(1, 0.2, 0.15))}) {
+            ggx_reflection_pdf ggx_pdf(normal, wo, alpha);
+            ok &= check("GGX reflection pdf, roughness " + r, integral_defensive(ggx_pdf), valid_fraction(ggx_pdf), 0.02);
+
+            for (double eta : {1.5, 1 / 1.5}) {
+                rough_dielectric_pdf glass(rough_dielectric_bsdf(normal, wo, eta, alpha));
+                ok &= check("rough glass pdf, roughness " + r + ", eta " + std::to_string(eta).substr(0, 4),
+                            integral_defensive(glass), valid_fraction(glass), 0.02);
+            }
+        }
+    }
 
     return ok ? 0 : 1;
 }

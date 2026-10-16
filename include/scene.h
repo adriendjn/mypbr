@@ -6,6 +6,7 @@
 #include "material.h"
 #include "quad.h"
 #include "sphere.h"
+#include "texture.h"
 #include "tonemap.h"
 
 #include <fstream>
@@ -41,9 +42,20 @@ class scene{
 // The camera line takes any of its settings, in any order; aperture and
 // focus can also be given on it.
 //
-//   material ground lambertian 0.8 0.8 0.0    # albedo r g b
-//   material gold   metal 0.8 0.6 0.2 0.3     # albedo r g b, fuzz
+//   texture  earth  image textures/earthmap.jpg   # path relative to the scene file
+//   texture  tiles  checker 0.5  0.2 0.3 0.1  0.9 0.9 0.9   # cube size, two colors
+//   texture  plain  solid 0.8 0.2 0.2
+//
+//   material ground lambertian 0.8 0.8 0.0    # albedo r g b ...
+//   material globe  lambertian texture earth  # ... or a named texture
+//   material gold   metal 0.8 0.6 0.2 0.3     # albedo r g b, roughness (0 = mirror)
 //   material glass  dielectric 1.5            # index of refraction
+//   material frost  dielectric 1.5 roughness 0.3
+//   material paint  principled color 0.8 0.1 0.1 metallic 0 roughness 0.4 ior 1.5
+//
+// principled settings are all optional and can come in any order (defaults:
+// color 0.8 0.8 0.8, metallic 0, roughness 0.5, ior 1.5); "texture <name>"
+// can replace "color r g b".
 //   material lamp   emissive 15 15 15         # area light, radiance r g b
 //
 //   background   0 0 0         # constant background instead of the sky gradient
@@ -78,6 +90,35 @@ inline bool load_scene(const std::string& path, scene& result) {
     };
 
     std::map<std::string, std::shared_ptr<material>> materials;
+    std::map<std::string, std::shared_ptr<texture>> textures;
+
+    // Directory of the scene file, for resolving relative texture paths.
+    auto slash = path.find_last_of('/');
+    std::string scene_dir = slash == std::string::npos ? "" : path.substr(0, slash + 1);
+
+    // Reads either "r g b" or "texture <name>" into tex, where first is the
+    // token already read ("texture" or the red value); false if neither works.
+    auto read_color_or_texture = [&](std::istringstream& in, const std::string& first,
+                                     std::shared_ptr<texture>& tex, std::string& error) {
+        if (first == "texture") {
+            std::string name;
+            if (!(in >> name))
+                return false;
+            auto it = textures.find(name);
+            if (it == textures.end()) {
+                error = "unknown texture '" + name + "'";
+                return false;
+            }
+            tex = it->second;
+            return true;
+        }
+        std::istringstream rgb(first);
+        double r, g, b;
+        if (!(rgb >> r) || !(in >> g >> b))
+            return false;
+        tex = std::make_shared<solid_color>(color(r, g, b));
+        return true;
+    };
     auto default_material = std::make_shared<lambertian>(color(0.5, 0.5, 0.5));
 
     // Reads an optional material name into name; returns nullptr if it is unknown.
@@ -167,6 +208,38 @@ inline bool load_scene(const std::string& path, scene& result) {
             std::string name;
             if (!(in >> name) || !result.display.set_tonemapper(name))
                 return fail(line_number, "expected 'tonemap none|reinhard|aces'");
+        } else if (keyword == "texture") {
+            std::string name, type;
+            if (!(in >> name >> type))
+                return fail(line_number, "expected 'texture <name> <type> <parameters...>'");
+
+            std::shared_ptr<texture> tex;
+            if (type == "solid") {
+                double r, g, b;
+                if (!(in >> r >> g >> b))
+                    return fail(line_number, "expected 'texture <name> solid <r> <g> <b>'");
+                tex = std::make_shared<solid_color>(color(r, g, b));
+            } else if (type == "checker") {
+                double scale, r0, g0, b0, r1, g1, b1;
+                if (!(in >> scale >> r0 >> g0 >> b0 >> r1 >> g1 >> b1) || scale <= 0)
+                    return fail(line_number, "expected 'texture <name> checker <scale> <r g b> <r g b>'");
+                tex = std::make_shared<checker_texture>(scale,
+                    std::make_shared<solid_color>(color(r0, g0, b0)),
+                    std::make_shared<solid_color>(color(r1, g1, b1)));
+            } else if (type == "image") {
+                std::string file;
+                if (!(in >> file))
+                    return fail(line_number, "expected 'texture <name> image <path>'");
+                if (file[0] != '/')
+                    file = scene_dir + file;
+                auto image = std::make_shared<image_texture>(file);
+                if (!image->loaded())
+                    return fail(line_number, "cannot load image '" + file + "'");
+                tex = image;
+            } else {
+                return fail(line_number, "unknown texture type '" + type + "'");
+            }
+            textures[name] = tex;
         } else if (keyword == "material") {
             std::string name, type;
             if (!(in >> name >> type))
@@ -174,20 +247,48 @@ inline bool load_scene(const std::string& path, scene& result) {
 
             std::shared_ptr<material> mat;
             if (type == "lambertian") {
-                double r, g, b;
-                if (!(in >> r >> g >> b))
-                    return fail(line_number, "expected 'material <name> lambertian <r> <g> <b>'");
-                mat = std::make_shared<lambertian>(color(r, g, b));
+                std::shared_ptr<texture> tex;
+                std::string first, error;
+                if (!(in >> first) || !read_color_or_texture(in, first, tex, error))
+                    return fail(line_number, error.empty()
+                        ? "expected 'material <name> lambertian <r> <g> <b>' or '... lambertian texture <name>'"
+                        : error);
+                mat = std::make_shared<lambertian>(tex);
             } else if (type == "metal") {
-                double r, g, b, fuzz;
-                if (!(in >> r >> g >> b >> fuzz))
-                    return fail(line_number, "expected 'material <name> metal <r> <g> <b> <fuzz>'");
-                mat = std::make_shared<metal>(color(r, g, b), fuzz);
+                double r, g, b, roughness;
+                if (!(in >> r >> g >> b >> roughness) || roughness < 0)
+                    return fail(line_number, "expected 'material <name> metal <r> <g> <b> <roughness>'");
+                mat = std::make_shared<metal>(color(r, g, b), roughness);
             } else if (type == "dielectric") {
-                double ior;
+                double ior, roughness = 0;
+                std::string key;
                 if (!(in >> ior) || ior <= 0)
-                    return fail(line_number, "expected 'material <name> dielectric <index of refraction>'");
-                mat = std::make_shared<dielectric>(ior);
+                    return fail(line_number, "expected 'material <name> dielectric <index of refraction> [roughness <r>]'");
+                if (in >> key) {
+                    if (key != "roughness" || !(in >> roughness) || roughness < 0)
+                        return fail(line_number, "expected 'material <name> dielectric <index of refraction> [roughness <r>]'");
+                }
+                mat = std::make_shared<dielectric>(ior, roughness);
+            } else if (type == "principled") {
+                std::shared_ptr<texture> base = std::make_shared<solid_color>(color(0.8, 0.8, 0.8));
+                double metallic = 0, roughness = 0.5, ior = 1.5;
+                std::string key, error;
+                while (in >> key) {
+                    bool ok = true;
+                    if (key == "texture") {
+                        ok = read_color_or_texture(in, key, base, error);
+                    } else if (key == "color") {
+                        std::string first;
+                        ok = bool(in >> first) && read_color_or_texture(in, first, base, error);
+                    }
+                    else if (key == "metallic")  ok = bool(in >> metallic) && metallic >= 0 && metallic <= 1;
+                    else if (key == "roughness") ok = bool(in >> roughness) && roughness >= 0 && roughness <= 1;
+                    else if (key == "ior")       ok = bool(in >> ior) && ior > 0;
+                    else return fail(line_number, "unknown principled setting '" + key + "'");
+                    if (!ok)
+                        return fail(line_number, error.empty() ? "bad value for principled setting '" + key + "'" : error);
+                }
+                mat = std::make_shared<principled>(base, metallic, roughness, ior);
             } else if (type == "emissive") {
                 double r, g, b;
                 if (!(in >> r >> g >> b))

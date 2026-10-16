@@ -1,0 +1,21 @@
+# Texture test: an image-textured globe on a checkered floor, next to a
+# principled sphere using the same image as its base color.
+
+image_width  800
+aspect_ratio 16/9
+samples_per_pixel 128
+max_depth    32
+tonemap      aces
+
+camera lookfrom 0 2 9  lookat 0 1 0  vup 0 1 0  vfov 30
+
+texture  earth image ../textures/earthmap.jpg
+texture  tiles checker 0.5  0.2 0.3 0.1  0.9 0.9 0.9
+
+material ground lambertian texture tiles
+material globe  lambertian texture earth
+material shiny  principled texture earth roughness 0.15
+
+sphere  0   -1000 0  1000  ground
+sphere -1.2  1    0  1     globe
+sphere  1.2  1    0  1     shiny

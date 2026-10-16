@@ -22,6 +22,11 @@ class onb{
             return (v[0] * axis[0]) + (v[1] * axis[1]) + (v[2] * axis[2]);
         }
 
+        // Transform from local space to basis coordinates.
+        vec3 to_local(const vec3& v) const {
+            return vec3(dot(v, axis[0]), dot(v, axis[1]), dot(v, axis[2]));
+        }
+
     private:
         vec3 axis[3];
 };

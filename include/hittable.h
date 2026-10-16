@@ -16,6 +16,7 @@ class hit_record{
         const material* mat;  // Owned by the object that was hit; a raw pointer avoids
                               // atomic reference counting on every hit across threads
         double t;
+        double u, v;  // Surface (texture) coordinates
         bool front_face;
 
         // Sets the normal so it always points against the incoming ray.
