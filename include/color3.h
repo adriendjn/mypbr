@@ -14,24 +14,17 @@ inline double linear_to_gamma(double linear_component) {
     return 0;
 }
 
-inline void write_color(std::ostream& out, const color& pixel_color) {
-    auto r = pixel_color.x();
-    auto g = pixel_color.y();
-    auto b = pixel_color.z();
-
-    // Apply a linear to gamma transform for gamma 2
-    r = linear_to_gamma(r);
-    g = linear_to_gamma(g);
-    b = linear_to_gamma(b);
-
-    // Translate the [0,1] component values to the byte range [0,255].
+// Converts a linear [0,1] component to a gamma-encoded byte.
+inline unsigned char to_byte(double linear_component) {
     static const interval intensity(0.000, 0.999);
-    int rbyte = int(256 * intensity.clamp(r));
-    int gbyte = int(256 * intensity.clamp(g));
-    int bbyte = int(256 * intensity.clamp(b));
+    return (unsigned char)(256 * intensity.clamp(linear_to_gamma(linear_component)));
+}
 
-    // Write out the pixel color components.
-    out << rbyte << ' ' << gbyte << ' ' << bbyte << '\n';
+inline void write_color(std::ostream& out, const color& pixel_color) {
+    // Write out the gamma-encoded pixel color components.
+    out << int(to_byte(pixel_color.x())) << ' '
+        << int(to_byte(pixel_color.y())) << ' '
+        << int(to_byte(pixel_color.z())) << '\n';
 }
 
 #endif

@@ -23,6 +23,13 @@
 //   samples_per_pixel 100      # random samples per pixel (antialiasing)
 //   max_depth    50            # maximum number of ray bounces
 //
+//   camera lookfrom 13 2 3  lookat 0 0 0  vup 0 1 0  vfov 20
+//   aperture     0.6           # defocus angle in degrees (0 = pinhole)
+//   focus        10            # distance to the plane of perfect focus
+//
+// The camera line takes any of its settings, in any order; aperture and
+// focus can also be given on it.
+//
 //   material ground lambertian 0.8 0.8 0.0    # albedo r g b
 //   material gold   metal 0.8 0.6 0.2 0.3     # albedo r g b, fuzz
 //   material glass  dielectric 1.5            # index of refraction
@@ -92,6 +99,29 @@ inline bool load_scene(const std::string& path, hittable_list& world, camera& ca
         } else if (keyword == "max_depth") {
             if (!(in >> cam.max_depth) || cam.max_depth < 1)
                 return fail(line_number, "expected 'max_depth <positive integer>'");
+        } else if (keyword == "camera") {
+            std::string key;
+            while (in >> key) {
+                bool ok = true;
+                if (key == "lookfrom")      ok = bool(in >> cam.lookfrom[0] >> cam.lookfrom[1] >> cam.lookfrom[2]);
+                else if (key == "lookat")   ok = bool(in >> cam.lookat[0] >> cam.lookat[1] >> cam.lookat[2]);
+                else if (key == "vup")      ok = bool(in >> cam.vup[0] >> cam.vup[1] >> cam.vup[2]);
+                else if (key == "vfov")     ok = bool(in >> cam.vfov) && cam.vfov > 0 && cam.vfov < 180;
+                else if (key == "aperture") ok = bool(in >> cam.defocus_angle) && cam.defocus_angle >= 0;
+                else if (key == "focus")    ok = bool(in >> cam.focus_dist) && cam.focus_dist > 0;
+                else return fail(line_number, "unknown camera setting '" + key + "'");
+                if (!ok)
+                    return fail(line_number, "bad value for camera setting '" + key + "'");
+            }
+        } else if (keyword == "vfov") {
+            if (!(in >> cam.vfov) || cam.vfov <= 0 || cam.vfov >= 180)
+                return fail(line_number, "expected 'vfov <degrees between 0 and 180>'");
+        } else if (keyword == "aperture") {
+            if (!(in >> cam.defocus_angle) || cam.defocus_angle < 0)
+                return fail(line_number, "expected 'aperture <defocus angle in degrees>'");
+        } else if (keyword == "focus") {
+            if (!(in >> cam.focus_dist) || cam.focus_dist <= 0)
+                return fail(line_number, "expected 'focus <positive distance>'");
         } else if (keyword == "material") {
             std::string name, type;
             if (!(in >> name >> type))
