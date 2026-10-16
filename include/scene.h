@@ -4,6 +4,7 @@
 #include "camera.h"
 #include "hittable_list.h"
 #include "material.h"
+#include "quad.h"
 #include "sphere.h"
 
 #include <fstream>
@@ -33,8 +34,13 @@
 //   material ground lambertian 0.8 0.8 0.0    # albedo r g b
 //   material gold   metal 0.8 0.6 0.2 0.3     # albedo r g b, fuzz
 //   material glass  dielectric 1.5            # index of refraction
+//   material lamp   emissive 15 15 15         # area light, radiance r g b
+//
+//   background   0 0 0         # constant background instead of the sky gradient
 //
 //   sphere       0 0 -1  0.5  glass   # center x y z, radius, [material]
+//   quad   Qx Qy Qz  ux uy uz  vx vy vz  [material]   # corner, two edges
+//   box    x0 y0 z0  x1 y1 z1  [material]            # two opposite corners
 //
 // Materials must be defined before they are used. A sphere without a
 // material name gets a default grey Lambertian.
@@ -122,6 +128,12 @@ inline bool load_scene(const std::string& path, hittable_list& world, camera& ca
         } else if (keyword == "focus") {
             if (!(in >> cam.focus_dist) || cam.focus_dist <= 0)
                 return fail(line_number, "expected 'focus <positive distance>'");
+        } else if (keyword == "background") {
+            double r, g, b;
+            if (!(in >> r >> g >> b))
+                return fail(line_number, "expected 'background <r> <g> <b>'");
+            cam.use_sky = false;
+            cam.background = color(r, g, b);
         } else if (keyword == "material") {
             std::string name, type;
             if (!(in >> name >> type))
@@ -143,6 +155,11 @@ inline bool load_scene(const std::string& path, hittable_list& world, camera& ca
                 if (!(in >> ior) || ior <= 0)
                     return fail(line_number, "expected 'material <name> dielectric <index of refraction>'");
                 mat = std::make_shared<dielectric>(ior);
+            } else if (type == "emissive") {
+                double r, g, b;
+                if (!(in >> r >> g >> b))
+                    return fail(line_number, "expected 'material <name> emissive <r> <g> <b>'");
+                mat = std::make_shared<diffuse_light>(color(r, g, b));
             } else {
                 return fail(line_number, "unknown material type '" + type + "'");
             }
@@ -156,6 +173,26 @@ inline bool load_scene(const std::string& path, hittable_list& world, camera& ca
             if (!mat)
                 return fail(line_number, "unknown material '" + mat_name + "'");
             world.add(std::make_shared<sphere>(point3(x, y, z), radius, mat));
+        } else if (keyword == "quad") {
+            point3 Q; vec3 u, v;
+            if (!(in >> Q[0] >> Q[1] >> Q[2] >> u[0] >> u[1] >> u[2] >> v[0] >> v[1] >> v[2]))
+                return fail(line_number, "expected 'quad <Qx Qy Qz> <ux uy uz> <vx vy vz> [material]'");
+            if (cross(u, v).near_zero())
+                return fail(line_number, "quad edges must not be parallel");
+            std::string mat_name;
+            auto mat = read_material(in, mat_name);
+            if (!mat)
+                return fail(line_number, "unknown material '" + mat_name + "'");
+            world.add(std::make_shared<quad>(Q, u, v, mat));
+        } else if (keyword == "box") {
+            point3 a, b;
+            if (!(in >> a[0] >> a[1] >> a[2] >> b[0] >> b[1] >> b[2]))
+                return fail(line_number, "expected 'box <x0 y0 z0> <x1 y1 z1> [material]'");
+            std::string mat_name;
+            auto mat = read_material(in, mat_name);
+            if (!mat)
+                return fail(line_number, "unknown material '" + mat_name + "'");
+            world.add(box(a, b, mat));
         } else {
             return fail(line_number, "unknown keyword '" + keyword + "'");
         }

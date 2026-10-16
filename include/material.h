@@ -16,6 +16,12 @@ class material{
             (void)r_in; (void)rec; (void)attenuation; (void)scattered;
             return false;
         }
+
+        // Light emitted at the hit point; black for everything but lights.
+        virtual color emitted(const hit_record& rec) const {
+            (void)rec;
+            return color(0, 0, 0);
+        }
 };
 
 class lambertian : public material{
@@ -95,6 +101,20 @@ class dielectric : public material{
             r0 = r0*r0;
             return r0 + (1-r0)*std::pow((1 - cosine), 5);
         }
+};
+
+// An area light: emits a constant radiance and scatters nothing.
+class diffuse_light : public material{
+    public:
+        diffuse_light(const color& emit) : emit(emit) {}
+
+        color emitted(const hit_record& rec) const override {
+            (void)rec;
+            return emit;
+        }
+
+    private:
+        color emit;
 };
 
 #endif
