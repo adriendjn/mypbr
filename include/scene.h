@@ -48,6 +48,9 @@ class scene{
 // focus can also be given on it.
 //
 //   texture  earth  image textures/earthmap.jpg   # path relative to the scene file
+//   texture  bumps  image textures/bumps_normal.png linear
+//                    # linear: 8-bit values are data (k / 255), not sRGB colors;
+//                    # use it for normal, roughness and metallic maps
 //   texture  tiles  checker 0.5  0.2 0.3 0.1  0.9 0.9 0.9   # cube size, two colors
 //   texture  plain  solid 0.8 0.2 0.2
 //
@@ -374,12 +377,18 @@ inline bool load_scene(const std::string& path, scene& result) {
                     std::make_shared<solid_color>(color(r0, g0, b0)),
                     std::make_shared<solid_color>(color(r1, g1, b1)));
             } else if (type == "image") {
-                std::string file;
+                std::string file, option;
                 if (!(in >> file))
-                    return fail(line_number, "expected 'texture <name> image <path>'");
+                    return fail(line_number, "expected 'texture <name> image <path> [linear]'");
+                bool linear = false;
+                if (in >> option) {
+                    if (option != "linear")
+                        return fail(line_number, "expected 'texture <name> image <path> [linear]'");
+                    linear = true;
+                }
                 if (file[0] != '/')
                     file = scene_dir + file;
-                auto image = std::make_shared<image_texture>(file);
+                auto image = std::make_shared<image_texture>(file, false, linear);
                 if (!image->loaded())
                     return fail(line_number, "cannot load image '" + file + "'");
                 tex = image;
