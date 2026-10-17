@@ -3,9 +3,11 @@
 // exactly as bright as the background. Darker pixels mean the integrator
 // loses energy; brighter ones mean it creates energy.
 //
-// Rough microfacet materials lose some energy by design (single-scattering
-// GGX ignores light bouncing between microfacets), so for those the test
-// only checks that energy stays bounded: never brighter than the background.
+// Rough glass and the dielectric principled material lose some energy by
+// design (single-scattering GGX ignores light bouncing between microfacets),
+// so for those the test only checks that energy stays bounded: never brighter
+// than the background. White rough metals get the Kulla-Conty compensation
+// lobe, so they must reflect everything again.
 
 #include <camera.h>
 #include <hittable_list.h>
@@ -79,6 +81,59 @@ static bool bounded(const std::string& name, std::shared_ptr<material> mat) {
     return ok;
 }
 
+// Mean value of the sphere's own pixels, without the background around it.
+// Rendering the same sphere black measures how much of each pixel it covers:
+// the black image is 1 - coverage.
+static double object_energy(std::shared_ptr<material> mat) {
+    double mean, black_mean, worst;
+    render_furnace(furnace_sphere(mat), mean, worst);
+    render_furnace(furnace_sphere(std::make_shared<lambertian>(color(0, 0, 0))), black_mean, worst);
+    return (mean - black_mean) / (1 - black_mean);
+}
+
+// A white conductor must reflect all light that reaches its pixels.
+static bool energy_conserving(const std::string& name, std::shared_ptr<material> mat, double tolerance) {
+    double energy = object_energy(mat);
+    bool ok = std::fabs(energy - 1) < tolerance;
+    std::cout << (ok ? "PASS " : "FAIL ") << name << ": sphere pixels " << energy
+              << " (tolerance " << tolerance << ")\n";
+    return ok;
+}
+
+// Directional albedo, the integral of eval over all directions for a view at
+// cos_o, estimated with the material's own sampling: E[eval / pdf].
+static double directional_albedo(const material& mat, double cos_o) {
+    hit_record rec{};
+    rec.p = point3(0, 0, 0);
+    rec.normal = vec3(0, 0, 1);
+    rec.front_face = true;
+    vec3 wo(std::sqrt(1 - cos_o * cos_o), 0, cos_o);
+    ray r_in(wo, -wo);
+
+    const int n = 200000;
+    double sum = 0;
+    for (int i = 0; i < n; i++) {
+        scatter_record srec;
+        if (!mat.scatter(r_in, rec, srec))
+            continue;
+        vec3 d = srec.pdf_ptr->generate();
+        double p = d.length_squared() > 0 ? srec.pdf_ptr->value(d) : 0;
+        if (p > 0) {
+            color f = mat.eval(r_in, rec, d);
+            sum += (f.x() + f.y() + f.z()) / (3 * p);
+        }
+    }
+    return sum / n;
+}
+
+static bool albedo_one(const std::string& name, const material& mat, double cos_o, double tolerance) {
+    double albedo = directional_albedo(mat, cos_o);
+    bool ok = std::fabs(albedo - 1) < tolerance;
+    std::cout << (ok ? "PASS " : "FAIL ") << name << ", cos_o " << cos_o << ": directional albedo "
+              << albedo << " (tolerance " << tolerance << ")\n";
+    return ok;
+}
+
 int main() {
     std::clog.setstate(std::ios::failbit);  // Silence render progress
 
@@ -110,6 +165,19 @@ int main() {
                       std::make_shared<principled>(white, 0.0, roughness, 1.5));
         ok &= bounded("principled metallic, roughness " + r,
                       std::make_shared<principled>(white, 1.0, roughness, 1.5));
+    }
+
+    // Multiple-scattering compensation: white rough conductors lose nothing.
+    // The sphere pixels average over every view angle; the directional
+    // albedo checks single angles, grazing ones included, with less noise.
+    for (double roughness : {0.5, 1.0}) {
+        auto r = std::to_string(roughness).substr(0, 3);
+        auto white_metal = std::make_shared<metal>(color(1, 1, 1), roughness);
+        ok &= energy_conserving("compensated GGX metal, roughness " + r, white_metal, 0.02);
+        ok &= energy_conserving("compensated principled metallic, roughness " + r,
+                                std::make_shared<principled>(white, 1.0, roughness, 1.5), 0.02);
+        for (double cos_o : {1.0, 0.5, 0.1})
+            ok &= albedo_one("compensated GGX metal, roughness " + r, *white_metal, cos_o, 0.01);
     }
     return ok ? 0 : 1;
 }
