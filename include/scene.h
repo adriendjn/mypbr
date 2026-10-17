@@ -84,7 +84,9 @@ class scene{
 //
 // Transformed objects are instances sharing the original geometry; a mesh
 // file used several times with the same material is loaded once. In a mesh,
-// "usemtl <name>" selects the scene material of that name when there is one.
+// "usemtl <name>" selects the scene material of that name when there is one,
+// else the one from the OBJ's mtllib file (colors, textures, alpha masks;
+// see load_mtl in obj_loader.h), else the mesh line's material.
 //
 // Materials must be defined before they are used. A sphere without a
 // material name gets a default grey Lambertian.

@@ -1,12 +1,14 @@
 # Crytek Sponza atrium (262k triangles), lit by the sky and a sun sphere.
-# Needs the mesh: run tools/fetch_models.sh first.
+# Needs the mesh: run tools/fetch_models.sh first. Its materials and
+# textures come from sponza.mtl; "stone" is only the fallback for faces
+# whose material can't be found.
 
 image_width  640
 aspect_ratio 16/9
 samples_per_pixel 128
 max_depth    16
 tonemap      aces
-exposure     -1.5
+exposure     0
 
 camera lookfrom 1000 260 -30  lookat -800 480 30  vup 0 1 0  vfov 70
 
