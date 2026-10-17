@@ -4,6 +4,7 @@
 #include "camera.h"
 #include "hittable_list.h"
 #include "instance.h"
+#include "light_list.h"
 #include "material.h"
 #include "medium.h"
 #include "obj_loader.h"
@@ -25,7 +26,7 @@
 class scene{
     public:
         hittable_list    world;
-        hittable_list    lights;   // Emissive objects (also part of world) and the environment
+        light_list       lights;   // Emissive objects (also part of world) and the environment
         camera           cam;
         display_settings display;  // How radiance becomes PNG/PPM pixels
 };
@@ -48,6 +49,9 @@ class scene{
 // focus can also be given on it.
 //
 //   texture  earth  image textures/earthmap.jpg   # path relative to the scene file
+//   texture  bumps  image textures/bumps_normal.png linear
+//                    # linear: 8-bit values are data (k / 255), not sRGB colors;
+//                    # use it for normal, roughness and metallic maps
 //   texture  tiles  checker 0.5  0.2 0.3 0.1  0.9 0.9 0.9   # cube size, two colors
 //   texture  plain  solid 0.8 0.2 0.2
 //
@@ -56,11 +60,25 @@ class scene{
 //   material gold   metal 0.8 0.6 0.2 0.3     # albedo r g b, roughness (0 = mirror)
 //   material glass  dielectric 1.5            # index of refraction
 //   material frost  dielectric 1.5 roughness 0.3
+//   material bottle dielectric 1.5 color 0.6 0.9 0.7 distance 2
+//                              # colored glass (Beer-Lambert absorption): light that
+//                              # travels <distance> inside keeps <color> of itself,
+//                              # so thick parts are darker (defaults: clear, distance 1)
 //   material paint  principled color 0.8 0.1 0.1 metallic 0 roughness 0.4 ior 1.5
 //
 // principled settings are all optional and can come in any order (defaults:
 // color 0.8 0.8 0.8, metallic 0, roughness 0.5, ior 1.5); "texture <name>"
-// can replace "color r g b".
+// can replace "color r g b", and "metallic texture <name>" and "roughness
+// texture <name>" read those from a texture's red channel at every hit:
+//   material worn   principled texture rust metallic texture rust_m roughness texture rust_r
+//
+// lambertian, metal and principled lines can end with a tangent-space normal
+// map (an RGB image texture, loaded linear; see normal_mapped in material.h):
+//   material bricks lambertian texture brick_color normal_map brick_normal
+//   material steel  metal 0.9 0.9 0.9 0.2 normal_map bumps
+//
+//   normal_maps  off           # ignore normal maps (normal_map and those of OBJ/MTL
+//                              # files) on the lines that follow; "on" is the default
 //   material lamp   emissive 15 15 15         # area light, radiance r g b
 //   material haze   volume 0.9 0.9 0.9 g 0.3  # for media: scattering albedo r g b,
 //                                             # optional Henyey-Greenstein g in (-1, 1)
@@ -70,6 +88,8 @@ class scene{
 //   environment  textures/sky.hdr  [intensity 1] [rotate 0]
 //                              # equirectangular HDR sky that also lights the scene
 //                              # (importance sampled); rotate turns it about y, in degrees
+//   light_selection power      # how next event estimation picks a light: power (the
+//                              # default, in proportion to emitted power) or uniform
 //   exposure     0             # stops; display images are scaled by 2^exposure
 //   tonemap      aces          # none (clamp, the default), reinhard or aces
 //
@@ -108,7 +128,8 @@ class scene{
 // material name gets a default grey Lambertian.
 //
 // Every object with an emissive material is also added to lights, so the
-// renderer can sample it directly.
+// renderer can sample it directly; lights are picked in proportion to their
+// power (see light_list.h) unless light_selection says uniform.
 //
 // Returns false and prints the offending line on std::cerr on error.
 inline bool load_scene(const std::string& path, scene& result) {
@@ -158,6 +179,41 @@ inline bool load_scene(const std::string& path, scene& result) {
         return true;
     };
     auto default_material = std::make_shared<lambertian>(color(0.5, 0.5, 0.5));
+
+    // Reads "<name>" of a defined texture into tex; false with a message in error if there is none.
+    auto read_texture_name = [&](std::istringstream& in, std::shared_ptr<texture>& tex, std::string& error) {
+        std::string name;
+        if (!(in >> name)) {
+            error = "expected a texture name";
+            return false;
+        }
+        auto it = textures.find(name);
+        if (it == textures.end()) {
+            error = "unknown texture '" + name + "'";
+            return false;
+        }
+        tex = it->second;
+        return true;
+    };
+
+    // Reads "<number>" or "texture <name>" into tex, the number within [0, 1]
+    // (a principled metallic or roughness value).
+    auto read_value_or_texture = [&](std::istringstream& in, std::shared_ptr<texture>& tex, std::string& error) {
+        std::string first;
+        if (!(in >> first))
+            return false;
+        if (first == "texture")
+            return read_texture_name(in, tex, error);
+        std::istringstream number(first);
+        double x;
+        if (!(number >> x) || x < 0 || x > 1)
+            return false;
+        tex = std::make_shared<solid_color>(color(x, x, x));
+        return true;
+    };
+
+    // Ignores normal maps after "normal_maps off", to compare renders
+    bool use_normal_maps = true;
 
     // Reads what may follow an object's geometry: an optional material name,
     // then any transforms, applied in the order given. Returns false with a
@@ -256,7 +312,7 @@ inline bool load_scene(const std::string& path, scene& result) {
 
     // Meshes already loaded, by file and default material, so repeated
     // "mesh" lines share geometry and only add instances.
-    std::map<std::tuple<std::string, bool, const material*>, std::vector<obj_part>> mesh_cache;
+    std::map<std::tuple<std::string, bool, const material*, bool>, std::vector<obj_part>> mesh_cache;
 
     // Global fog, added once the whole scene (and so its extent) is known
     double fog_density = 0;
@@ -327,6 +383,11 @@ inline bool load_scene(const std::string& path, scene& result) {
                 return fail(line_number, "expected 'background <r> <g> <b>'");
             cam.use_sky = false;
             cam.background = color(r, g, b);
+        } else if (keyword == "light_selection") {
+            std::string mode;
+            if (!(in >> mode) || (mode != "power" && mode != "uniform"))
+                return fail(line_number, "expected 'light_selection power|uniform'");
+            lights.strategy = mode == "power" ? light_list::selection::power : light_list::selection::uniform;
         } else if (keyword == "environment") {
             std::string file, key;
             double intensity = 1, rotation = 0;
@@ -355,6 +416,11 @@ inline bool load_scene(const std::string& path, scene& result) {
             std::string name;
             if (!(in >> name) || !result.display.set_tonemapper(name))
                 return fail(line_number, "expected 'tonemap none|reinhard|aces'");
+        } else if (keyword == "normal_maps") {
+            std::string state;
+            if (!(in >> state) || (state != "on" && state != "off"))
+                return fail(line_number, "expected 'normal_maps on|off'");
+            use_normal_maps = state == "on";
         } else if (keyword == "texture") {
             std::string name, type;
             if (!(in >> name >> type))
@@ -374,12 +440,18 @@ inline bool load_scene(const std::string& path, scene& result) {
                     std::make_shared<solid_color>(color(r0, g0, b0)),
                     std::make_shared<solid_color>(color(r1, g1, b1)));
             } else if (type == "image") {
-                std::string file;
+                std::string file, option;
                 if (!(in >> file))
-                    return fail(line_number, "expected 'texture <name> image <path>'");
+                    return fail(line_number, "expected 'texture <name> image <path> [linear]'");
+                bool linear = false;
+                if (in >> option) {
+                    if (option != "linear")
+                        return fail(line_number, "expected 'texture <name> image <path> [linear]'");
+                    linear = true;
+                }
                 if (file[0] != '/')
                     file = scene_dir + file;
-                auto image = std::make_shared<image_texture>(file);
+                auto image = std::make_shared<image_texture>(file, false, linear);
                 if (!image->loaded())
                     return fail(line_number, "cannot load image '" + file + "'");
                 tex = image;
@@ -393,6 +465,18 @@ inline bool load_scene(const std::string& path, scene& result) {
                 return fail(line_number, "expected 'material <name> <type> <parameters...>'");
 
             std::shared_ptr<material> mat;
+            std::shared_ptr<texture> normal_map;  // Optional, for lambertian, metal and principled
+            // An optional "normal_map <texture>" at the end of the line
+            auto read_normal_map = [&](std::string& error) {
+                std::string key;
+                if (!(in >> key))
+                    return true;
+                if (key != "normal_map") {
+                    error = "unexpected value '" + key + "' (expected 'normal_map <texture>')";
+                    return false;
+                }
+                return read_texture_name(in, normal_map, error);
+            };
             if (type == "lambertian") {
                 std::shared_ptr<texture> tex;
                 std::string first, error;
@@ -400,25 +484,48 @@ inline bool load_scene(const std::string& path, scene& result) {
                     return fail(line_number, error.empty()
                         ? "expected 'material <name> lambertian <r> <g> <b>' or '... lambertian texture <name>'"
                         : error);
+                if (!read_normal_map(error))
+                    return fail(line_number, error);
                 mat = std::make_shared<lambertian>(tex);
             } else if (type == "metal") {
                 double r, g, b, roughness;
+                std::string error;
                 if (!(in >> r >> g >> b >> roughness) || roughness < 0)
                     return fail(line_number, "expected 'material <name> metal <r> <g> <b> <roughness>'");
+                if (!read_normal_map(error))
+                    return fail(line_number, error);
                 mat = std::make_shared<metal>(color(r, g, b), roughness);
             } else if (type == "dielectric") {
-                double ior, roughness = 0;
+                const char* usage = "expected 'material <name> dielectric <index of refraction>"
+                                    " [roughness <r>] [color <r> <g> <b> [distance <d>]]'";
+                double ior, roughness = 0, distance = 1;
+                color tint(1, 1, 1);
                 std::string key;
                 if (!(in >> ior) || ior <= 0)
-                    return fail(line_number, "expected 'material <name> dielectric <index of refraction> [roughness <r>]'");
-                if (in >> key) {
-                    if (key != "roughness" || !(in >> roughness) || roughness < 0)
-                        return fail(line_number, "expected 'material <name> dielectric <index of refraction> [roughness <r>]'");
+                    return fail(line_number, usage);
+                while (in >> key) {
+                    bool ok = true;
+                    if (key == "roughness") {
+                        ok = bool(in >> roughness) && roughness >= 0;
+                    } else if (key == "color") {
+                        double r, g, b;
+                        // 0 would need infinite absorption, > 1 would add energy
+                        ok = bool(in >> r >> g >> b) && r > 0 && g > 0 && b > 0 && r <= 1 && g <= 1 && b <= 1;
+                        tint = color(r, g, b);
+                    } else if (key == "distance") {
+                        ok = bool(in >> distance) && distance > 0;
+                    } else {
+                        ok = false;
+                    }
+                    if (!ok)
+                        return fail(line_number, usage);
                 }
-                mat = std::make_shared<dielectric>(ior, roughness);
+                mat = std::make_shared<dielectric>(ior, roughness, dielectric::absorption_for(tint, distance));
             } else if (type == "principled") {
                 std::shared_ptr<texture> base = std::make_shared<solid_color>(color(0.8, 0.8, 0.8));
-                double metallic = 0, roughness = 0.5, ior = 1.5;
+                std::shared_ptr<texture> metallic = std::make_shared<solid_color>(color(0, 0, 0));
+                std::shared_ptr<texture> roughness = std::make_shared<solid_color>(color(0.5, 0.5, 0.5));
+                double ior = 1.5;
                 std::string key, error;
                 while (in >> key) {
                     bool ok = true;
@@ -428,9 +535,10 @@ inline bool load_scene(const std::string& path, scene& result) {
                         std::string first;
                         ok = bool(in >> first) && read_color_or_texture(in, first, base, error);
                     }
-                    else if (key == "metallic")  ok = bool(in >> metallic) && metallic >= 0 && metallic <= 1;
-                    else if (key == "roughness") ok = bool(in >> roughness) && roughness >= 0 && roughness <= 1;
-                    else if (key == "ior")       ok = bool(in >> ior) && ior > 0;
+                    else if (key == "metallic")   ok = read_value_or_texture(in, metallic, error);
+                    else if (key == "roughness")  ok = read_value_or_texture(in, roughness, error);
+                    else if (key == "ior")        ok = bool(in >> ior) && ior > 0;
+                    else if (key == "normal_map") ok = read_texture_name(in, normal_map, error);
                     else return fail(line_number, "unknown principled setting '" + key + "'");
                     if (!ok)
                         return fail(line_number, error.empty() ? "bad value for principled setting '" + key + "'" : error);
@@ -454,6 +562,8 @@ inline bool load_scene(const std::string& path, scene& result) {
             } else {
                 return fail(line_number, "unknown material type '" + type + "'");
             }
+            if (normal_map && use_normal_maps)
+                mat = std::make_shared<normal_mapped>(mat, normal_map);
             materials[name] = mat;
         } else if (keyword == "sphere" || keyword == "quad" || keyword == "box") {
             std::shared_ptr<hittable> object;
@@ -544,11 +654,11 @@ inline bool load_scene(const std::string& path, scene& result) {
             if (!read_tail(tail, mat, xform, transformed, error))
                 return fail(line_number, error);
 
-            auto key = std::make_tuple(file, smooth, mat.get());
+            auto key = std::make_tuple(file, smooth, mat.get(), use_normal_maps);
             auto cached = mesh_cache.find(key);
             if (cached == mesh_cache.end()) {
                 std::vector<obj_part> parts;
-                if (!load_obj(file, materials, mat, smooth, parts, error))
+                if (!load_obj(file, materials, mat, smooth, parts, error, use_normal_maps))
                     return fail(line_number, error);
                 size_t triangle_count = 0;
                 for (const auto& part : parts)
@@ -579,6 +689,7 @@ inline bool load_scene(const std::string& path, scene& result) {
     if ((cam.lookfrom - cam.lookat).near_zero() || cross(cam.vup, cam.lookfrom - cam.lookat).near_zero())
         return fail(line_number, "camera lookfrom must differ from lookat, and vup must not point along the view");
 
+    lights.build(world.bounding_box());
     return true;
 }
 

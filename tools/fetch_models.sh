@@ -35,3 +35,10 @@ for t in background chain_texture lion spnza_bricks_a_diff sponza_arch_diff \
          vase_hanging vase_plant vase_round; do
     fetch "textures/$t.tga" "$SPONZA/textures/$t.tga"
 done
+
+# Its tangent-space normal maps (*_ddn.tga), which sponza.mtl names with
+# map_Disp: whatever the MTL lists, so the two can't drift apart
+for t in $(awk '$1 == "map_Disp" || $1 == "map_Bump" || $1 == "map_bump" || $1 == "bump" || $1 == "norm" { print $NF }' \
+               models/external/sponza.mtl | tr -d '\r' | sort -u); do
+    fetch "$t" "$SPONZA/$t"
+done

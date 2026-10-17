@@ -45,6 +45,7 @@ class sphere : public hittable{
             vec3 outward_normal = (rec.p - center) / radius;
             rec.set_face_normal(r, outward_normal);
             get_sphere_uv(outward_normal * (radius < 0 ? -1.0 : 1.0), rec.u, rec.v);
+            get_sphere_tangents(outward_normal * (radius < 0 ? -1.0 : 1.0), std::fabs(radius), rec.dpdu, rec.dpdv);
             rec.mat = mat.get();
 
             return true;
@@ -81,6 +82,11 @@ class sphere : public hittable{
             return uvw.transform(random_to_sphere(r, distance_squared));
         }
 
+        // pi * area * L. A hollow (negative radius) sphere emits inwards, over the same area.
+        double power() const override {
+            return pi * 4*pi*radius*radius * luminance(mat->average_emission());
+        }
+
     private:
         point3 center;
         double radius;
@@ -96,6 +102,21 @@ class sphere : public hittable{
 
             u = phi / (2*pi);
             v = theta / pi;
+        }
+
+        // dp/du and dp/dv for the (u, v) of get_sphere_uv, at the point
+        // r p (p on the unit sphere). With phi = 2 pi u and theta = pi v,
+        // p = (-sin(theta) cos(phi), -cos(theta), sin(theta) sin(phi)), so
+        // dp/dphi = (z, 0, -x) and dp/dtheta = (-x y, sin^2(theta), -y z) / sin(theta).
+        // Both vanish or blow up at the poles, where they are left zero.
+        static void get_sphere_tangents(const point3& p, double r, vec3& dpdu, vec3& dpdv) {
+            double sin_theta = std::sqrt(p.x()*p.x() + p.z()*p.z());
+            if (sin_theta < 1e-8) {
+                dpdu = dpdv = vec3(0, 0, 0);
+                return;
+            }
+            dpdu = (2*pi*r) * vec3(p.z(), 0, -p.x());
+            dpdv = (pi*r / sin_theta) * vec3(-p.x()*p.y(), sin_theta*sin_theta, -p.y()*p.z());
         }
 
         static vec3 random_to_sphere(double radius, double distance_squared) {

@@ -53,6 +53,8 @@ class quad : public hittable{
             rec.p = intersection;
             rec.u = alpha;
             rec.v = beta;
+            rec.dpdu = u;  // p = Q + alpha u + beta v
+            rec.dpdv = v;
             rec.mat = mat.get();
             rec.set_face_normal(r, normal);
 
@@ -75,6 +77,8 @@ class quad : public hittable{
             auto p = Q + (random_double() * u) + (random_double() * v);
             return p - origin;
         }
+
+        double power() const override { return pi * area * luminance(mat->average_emission()); }
 
     private:
         point3 Q;

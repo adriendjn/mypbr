@@ -106,6 +106,26 @@ class environment_light : public hittable{
             return vec3(sin_theta * std::sin(phi), std::cos(theta), -sin_theta * std::cos(phi));
         }
 
+        // The power the sky pours into a scene of the given bounding radius,
+        // estimated as pbrt does: light arriving from direction w crosses a
+        // disk of area pi R^2 facing w (the scene's silhouette, roughly), so
+        // the flux is pi R^2 times the integral of L over all directions,
+        // i.e. pi R^2 * 4 pi * (L averaged over solid angle). This makes it
+        // comparable with the pi * A * L of an area light inside the scene.
+        // It has no hittable::power() override because it needs the radius.
+        double power(double scene_radius) const {
+            if (pixels.empty())
+                return 0;
+            // Integral of luminance over the sphere: each pixel covers a solid
+            // angle of (2 pi / width) (pi / height) sin(theta)
+            double sum = 0;
+            for (int j = 0; j < height; j++)
+                for (int i = 0; i < width; i++)
+                    sum += std::fmax(weight(i, j), 0.0);
+            double integral = intensity * sum * (2 * pi / width) * (pi / height);
+            return pi * scene_radius * scene_radius * integral;
+        }
+
     private:
         int width = 0, height = 0;
         std::vector<color> pixels;

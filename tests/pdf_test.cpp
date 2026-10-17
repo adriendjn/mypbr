@@ -3,6 +3,8 @@
 
 #include <environment.h>
 #include <hittable_list.h>
+#include <instance.h>
+#include <light_list.h>
 #include <material.h>
 #include <microfacet.h>
 #include <pdf.h>
@@ -69,6 +71,29 @@ static double valid_fraction(const pdf& p) {
     return double(valid) / n;
 }
 
+// Hemispherical-directional reflectance of a material two ways, which agree
+// only if eval() is consistent with the scatter() pdf: E[eval / pdf] over
+// directions drawn from that pdf, and E[eval / uniform] over the sphere.
+// (Assumes the pdf is non-zero wherever eval is.)
+static void reflectance_two_ways(const material& m, const ray& r_in, const hit_record& rec,
+                                 double& from_pdf, double& from_uniform) {
+    const int n = 400000;
+    scatter_record srec;
+    m.scatter(r_in, rec, srec);
+    sphere_pdf uniform;
+    from_pdf = from_uniform = 0;
+    for (int i = 0; i < n; i++) {
+        vec3 d = srec.pdf_ptr->generate();
+        double v = srec.pdf_ptr->value(d);
+        if (d.length_squared() > 0 && v > 0)
+            from_pdf += m.eval(r_in, rec, d).x() / v;
+        vec3 e = uniform.generate();
+        from_uniform += m.eval(r_in, rec, e).x() / uniform.value(e);
+    }
+    from_pdf /= n;
+    from_uniform /= n;
+}
+
 static bool check(const std::string& name, double got, double want, double tolerance) {
     bool ok = std::fabs(got - want) < tolerance;
     std::cout << (ok ? "PASS " : "FAIL ") << name << ": " << got << " (expected " << want << ")\n";
@@ -131,8 +156,62 @@ int main() {
     environment_light sky(sky_w, sky_h, sky_pixels, 1.0, 30.0);
     hittable_pdf to_sky(sky, origin);
     ok &= check("environment pdf integral", integral_defensive(to_sky), 1.0, 0.02);
-    ok &= check("environment sampling", cap_solid_angle(to_sky, vec3(0, 1, 0), -1.0), 4 * pi, 0.15);
+    // Standard deviation about 0.08: dim sky directions are rare and weigh 1 / pdf
+    ok &= check("environment sampling", cap_solid_angle(to_sky, vec3(0, 1, 0), -1.0), 4 * pi, 0.4);
     ok &= check("environment upper hemisphere", cap_solid_angle(to_sky, vec3(0, 1, 0), 0.0), 2 * pi, 0.15);
+
+    // Power-weighted light selection, with lights of very different power:
+    // the sky above, a small bright lamp, a big dim panel (scaled up by an
+    // instance) and a lamp whose power is unknown.
+    auto lamp_mat = std::make_shared<diffuse_light>(color(50, 50, 50));
+    auto dim_mat = std::make_shared<diffuse_light>(color(0.5, 0.5, 0.5));
+    auto shared_sky = std::make_shared<environment_light>(sky_w, sky_h, sky_pixels, 1.0, 30.0);
+    light_list mixed;
+    mixed.add(shared_sky);
+    mixed.add(std::make_shared<quad>(point3(-0.2, 1, -0.2), vec3(0.4, 0, 0), vec3(0, 0, 0.4), lamp_mat));
+    auto panel_light = std::make_shared<quad>(point3(-0.5, -0.5, 0), vec3(1, 0, 0), vec3(0, 1, 0), dim_mat);
+    mixed.add(std::make_shared<instance>(panel_light,
+        transform::translate(vec3(0, 0, -2)).then_after(transform::scale(vec3(2, 2, 2)))));
+    mixed.add(std::make_shared<sphere>(point3(1.5, 0, 0), 0.3, mat));  // Not emissive: power unknown
+    aabb mixed_bounds(point3(-2, -2, -3), point3(2, 2, 2));
+    mixed.uniform_fraction = 0;  // Pure power first
+    mixed.build(mixed_bounds);
+
+    double lamp_power = pi * 0.16 * 50;
+    double panel_power = pi * 4 * 0.5;  // Area 1 scaled by 2^2
+    ok &= check("light power ratio lamp / scaled panel", mixed.probability(1) / mixed.probability(2),
+                lamp_power / panel_power, 1e-9);
+    ok &= check("unknown light power falls back to the mean",
+                mixed.probability(3) / (mixed.probability(0) + mixed.probability(1) + mixed.probability(2)),
+                1.0 / 3.0, 1e-9);
+
+    // With the default defensive share, p_k = (1 - a) P_k / sum P + a / n
+    std::vector<double> pure;
+    for (size_t k = 0; k < mixed.objects.size(); k++)
+        pure.push_back(mixed.probability(k));
+    mixed.uniform_fraction = 0.2;
+    mixed.build(mixed_bounds);
+    ok &= check("defensive share of the dimmest light", mixed.probability(2),
+                0.8 * pure[2] + 0.2 / mixed.objects.size(), 1e-12);
+
+    double probability_sum = 0;
+    for (size_t k = 0; k < mixed.objects.size(); k++)
+        probability_sum += mixed.probability(k);
+    ok &= check("light probabilities sum", probability_sum, 1.0, 1e-12);
+
+    std::vector<int> picks(mixed.objects.size(), 0);
+    const int pick_count = 1000000;
+    for (int i = 0; i < pick_count; i++)
+        picks[mixed.pick(random_double())]++;
+    for (size_t k = 0; k < picks.size(); k++)
+        ok &= check("light " + std::to_string(k) + " selection frequency", double(picks[k]) / pick_count,
+                    mixed.probability(k), 5 * std::sqrt(mixed.probability(k) / pick_count));  // 5 sigma
+
+    hittable_pdf to_mixed(mixed, origin);
+    ok &= check("power-weighted light list pdf integral", integral_defensive(to_mixed), 1.0, 0.02);
+    // Dim parts of the sky are rarely drawn and weigh 1 / pdf each, so this
+    // estimate is noisy (standard deviation about 0.09)
+    ok &= check("power-weighted light list sampling", cap_solid_angle(to_mixed, vec3(0, 1, 0), -1.0), 4 * pi, 0.4);
 
     vec3 normal(0, 0, 1);
     for (double roughness : {0.2, 0.6, 1.0}) {
@@ -146,6 +225,71 @@ int main() {
                 rough_dielectric_pdf glass(rough_dielectric_bsdf(normal, wo, eta, alpha));
                 ok &= check("rough glass pdf, roughness " + r + ", eta " + std::to_string(eta).substr(0, 4),
                             integral_defensive(glass), valid_fraction(glass), 0.02);
+            }
+        }
+    }
+
+    // Rough metal mixes VNDF sampling with a cosine pdf for its multiple-
+    // scattering lobe; the mixture it hands the integrator must stay normalized.
+    hit_record rec{};
+    rec.normal = normal;
+    rec.front_face = true;
+    for (double roughness : {0.5, 1.0}) {
+        auto r = std::to_string(roughness).substr(0, 3);
+        metal rough_gold(color(1.0, 0.78, 0.34), roughness);
+        for (vec3 wo : {vec3(0, 0, 1), unit_vector(vec3(1, 0.2, 0.15))}) {
+            scatter_record srec;
+            rough_gold.scatter(ray(wo, -wo), rec, srec);
+            ok &= check("rough metal pdf, roughness " + r, integral_defensive(*srec.pdf_ptr),
+                        valid_fraction(*srec.pdf_ptr), 0.02);
+        }
+
+        // The compensation lobe f_ms cos_i must integrate to the 1 - E(mu_o)
+        // that single scattering misses (with cosine sampling: E[f / pdf])
+        double alpha = roughness_to_alpha(roughness);
+        cosine_pdf hemisphere_pdf(normal);
+        for (double cos_o : {1.0, 0.5, 0.1}) {
+            const int n = 400000;
+            double sum = 0;
+            for (int i = 0; i < n; i++) {
+                vec3 d = unit_vector(hemisphere_pdf.generate());
+                sum += ggx_ms_eval(cos_o, d.z(), alpha) / hemisphere_pdf.value(d);
+            }
+            ok &= check("multiple-scattering lobe energy, roughness " + r + ", cos_o " + std::to_string(cos_o).substr(0, 3),
+                        sum / n, ggx_ms_albedo(cos_o, alpha), 0.005);
+        }
+    }
+
+    // Normal mapping: the sampling pdf must follow the perturbed normal, and
+    // eval() with it, even where the bent normal had to be pulled towards a
+    // grazing wo. A constant map tilts the normal 60 degrees towards +x.
+    {
+        hit_record rec;
+        rec.p = point3(0, 0, 0);
+        rec.normal = vec3(0, 0, 1);
+        rec.front_face = true;
+        rec.u = rec.v = 0.5;
+        rec.dpdu = vec3(2, 0, 0);
+        rec.dpdv = vec3(0, 3, 0);
+        double s = std::sin(pi / 3), c = std::cos(pi / 3);
+        auto tilt = std::make_shared<solid_color>(color(0.5 * s + 0.5, 0.5, 0.5 * c + 0.5));
+        auto white = std::make_shared<solid_color>(color(1, 1, 1));
+        struct named{ std::string name; std::shared_ptr<material> m; };
+        for (const auto& [name, inner] : {
+                 named{"lambertian", std::make_shared<lambertian>(color(1, 1, 1))},
+                 named{"GGX metal", std::make_shared<metal>(color(1, 1, 1), 0.5)},
+                 named{"principled", std::make_shared<principled>(white, 0.3, 0.4, 1.5)}}) {
+            normal_mapped m(inner, tilt);
+            // wo straight up, then tilted away from the bump: 70 degrees off the
+            // real normal is below the perturbed one, so the normal gets bent
+            for (vec3 wo : {vec3(0, 0, 1), unit_vector(vec3(-std::tan(70 * pi / 180), 0, 1))}) {
+                ray r_in(wo, -wo);
+                bool grazing = wo.x() < 0;
+                double from_pdf, from_uniform;
+                reflectance_two_ways(m, r_in, rec, from_pdf, from_uniform);
+                ok &= check("normal mapped " + name + (grazing ? ", bent for grazing wo" : "") + ": eval matches pdf",
+                            from_pdf, from_uniform, 0.02);
+                ok &= from_pdf <= 1.0 + 0.02;  // And never reflects more than arrives
             }
         }
     }

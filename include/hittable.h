@@ -17,6 +17,10 @@ class hit_record{
                               // atomic reference counting on every hit across threads
         double t;
         double u, v;  // Surface (texture) coordinates
+        // How p moves with u and v (dp/du, dp/dv), unnormalized: the tangent
+        // and bitangent of tangent-space normal maps. Zero when the surface
+        // has no usable (u, v) parameterization.
+        vec3 dpdu, dpdv;
         bool front_face;
 
         // Sets the normal so it always points against the incoming ray.
@@ -47,6 +51,12 @@ class hittable{
             (void)origin;
             return vec3(1, 0, 0);
         }
+
+        // Luminance of the total power (flux) the object emits, used to pick
+        // lights in proportion to it. A one-sided diffuse emitter of area A
+        // and radiance L emits pi * A * L: the integral of L cos(theta) over
+        // the hemisphere is pi L. 0 means unknown (or not a light).
+        virtual double power() const { return 0; }
 };
 
 #endif

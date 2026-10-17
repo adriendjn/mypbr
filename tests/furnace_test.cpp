@@ -3,15 +3,20 @@
 // exactly as bright as the background. Darker pixels mean the integrator
 // loses energy; brighter ones mean it creates energy.
 //
-// Rough microfacet materials lose some energy by design (single-scattering
-// GGX ignores light bouncing between microfacets), so for those the test
-// only checks that energy stays bounded: never brighter than the background.
+// Rough glass and the dielectric principled material lose some energy by
+// design (single-scattering GGX ignores light bouncing between microfacets),
+// so for those the test only checks that energy stays bounded: never brighter
+// than the background. White rough metals get the Kulla-Conty compensation
+// lobe, so they must reflect everything again.
 
 #include <camera.h>
 #include <hittable_list.h>
 #include <material.h>
+#include <instance.h>
 #include <medium.h>
+#include <quad.h>
 #include <sphere.h>
+#include <texture.h>
 
 #include <cmath>
 #include <iostream>
@@ -58,6 +63,17 @@ static std::shared_ptr<hittable> furnace_sphere(std::shared_ptr<material> mat) {
     return std::make_shared<sphere>(point3(0, 0, -1), 0.5, mat);
 }
 
+// A tangent-space normal map tilting up to about 50 degrees, in waves over u and v.
+class wavy_normals : public texture{
+    public:
+        color value(double u, double v, const point3& p) const override {
+            (void)p;
+            double x = 0.6 * std::sin(40 * u), y = 0.6 * std::cos(25 * v);
+            double z = std::sqrt(std::fmax(1 - x*x - y*y, 0.0));
+            return 0.5 * color(x, y, z) + color(0.5, 0.5, 0.5);
+        }
+};
+
 // Energy conserving: the object must vanish.
 static bool furnace(const std::string& name, std::shared_ptr<hittable> object, double tolerance,
                     bool use_environment = false) {
@@ -79,6 +95,98 @@ static bool bounded(const std::string& name, std::shared_ptr<material> mat) {
     return ok;
 }
 
+// Mean value of the sphere's own pixels, without the background around it.
+// Rendering the same sphere black measures how much of each pixel it covers:
+// the black image is 1 - coverage.
+static double object_energy(std::shared_ptr<material> mat) {
+    double mean, black_mean, worst;
+    render_furnace(furnace_sphere(mat), mean, worst);
+    render_furnace(furnace_sphere(std::make_shared<lambertian>(color(0, 0, 0))), black_mean, worst);
+    return (mean - black_mean) / (1 - black_mean);
+}
+
+// A white conductor must reflect all light that reaches its pixels.
+static bool energy_conserving(const std::string& name, std::shared_ptr<material> mat, double tolerance) {
+    double energy = object_energy(mat);
+    bool ok = std::fabs(energy - 1) < tolerance;
+    std::cout << (ok ? "PASS " : "FAIL ") << name << ": sphere pixels " << energy
+              << " (tolerance " << tolerance << ")\n";
+    return ok;
+}
+
+// Directional albedo, the integral of eval over all directions for a view at
+// cos_o, estimated with the material's own sampling: E[eval / pdf].
+static double directional_albedo(const material& mat, double cos_o) {
+    hit_record rec{};
+    rec.p = point3(0, 0, 0);
+    rec.normal = vec3(0, 0, 1);
+    rec.front_face = true;
+    vec3 wo(std::sqrt(1 - cos_o * cos_o), 0, cos_o);
+    ray r_in(wo, -wo);
+
+    const int n = 200000;
+    double sum = 0;
+    for (int i = 0; i < n; i++) {
+        scatter_record srec;
+        if (!mat.scatter(r_in, rec, srec))
+            continue;
+        vec3 d = srec.pdf_ptr->generate();
+        double p = d.length_squared() > 0 ? srec.pdf_ptr->value(d) : 0;
+        if (p > 0) {
+            color f = mat.eval(r_in, rec, d);
+            sum += (f.x() + f.y() + f.z()) / (3 * p);
+        }
+    }
+    return sum / n;
+}
+
+static bool albedo_one(const std::string& name, const material& mat, double cos_o, double tolerance) {
+    double albedo = directional_albedo(mat, cos_o);
+    bool ok = std::fabs(albedo - 1) < tolerance;
+    std::cout << (ok ? "PASS " : "FAIL ") << name << ", cos_o " << cos_o << ": directional albedo "
+              << albedo << " (tolerance " << tolerance << ")\n";
+    return ok;
+}
+
+// Beer-Lambert check: a camera with a narrow view looks straight through a
+// wide slab of absorbing glass with index 1 (no refraction, and no Fresnel
+// reflection at normal incidence) at a white background. Every pixel must be
+// exp(-sigma_a d) for slab thickness d. The slab can be built at half the
+// thickness and scaled by 2 in an instance, which checks that the distance is
+// measured in world space even though instance::hit leaves directions unnormalized.
+static bool slab_transmittance(const std::string& name, bool scaled) {
+    const double d = 0.8;
+    const color sigma_a(0.2, 1.0, 3.0);
+    auto glass = std::make_shared<dielectric>(1.0, 0.0, sigma_a);
+
+    hittable_list world, lights;
+    if (scaled) {
+        auto slab = box(point3(-50, -50, -1 - d / 2), point3(50, 50, -1), glass);
+        world.add(std::make_shared<instance>(slab, transform::scale(vec3(2, 2, 2))));
+    } else {
+        world.add(box(point3(-100, -100, -2 - d), point3(100, 100, -2), glass));
+    }
+
+    camera cam;
+    cam.image_width = 8;
+    cam.aspect_ratio = 1;
+    cam.samples_per_pixel = 4;
+    cam.max_depth = 10;
+    cam.vfov = 0.1;  // Off-axis rays cross d / cos(theta): 1 + 4e-7 at most
+    cam.use_sky = false;
+    cam.background = color(1, 1, 1);
+    auto pixels = cam.render(world, lights).radiance;
+
+    double worst = 0;
+    for (const auto& p : pixels)
+        for (int k = 0; k < 3; k++)
+            worst = std::fmax(worst, std::fabs(p[k] - std::exp(-sigma_a[k] * d)));
+    bool ok = worst < 1e-5;
+    std::cout << (ok ? "PASS " : "FAIL ") << name << ": worst channel off exp(-sigma_a d) by "
+              << worst << '\n';
+    return ok;
+}
+
 int main() {
     std::clog.setstate(std::ios::failbit);  // Silence render progress
 
@@ -86,6 +194,11 @@ int main() {
     ok &= furnace("white lambertian", furnace_sphere(std::make_shared<lambertian>(color(1, 1, 1))), 1e-6);
     ok &= furnace("perfect mirror", furnace_sphere(std::make_shared<metal>(color(1, 1, 1), 0.0)), 1e-6);
     ok &= furnace("clear glass", furnace_sphere(std::make_shared<dielectric>(1.5)), 0.02);
+    // Zero absorption must change nothing
+    ok &= furnace("clear glass, explicit zero absorption",
+                  furnace_sphere(std::make_shared<dielectric>(1.5, 0.0, color(0, 0, 0))), 0.02);
+    ok &= slab_transmittance("absorbing slab", false);
+    ok &= slab_transmittance("absorbing slab, scaled instance", true);
     // Light sampling makes this one noisy (not exact like pure BSDF sampling
     // of a constant sky), so the tolerance is looser
     ok &= furnace("white lambertian, environment map",
@@ -101,15 +214,52 @@ int main() {
                       std::make_shared<constant_medium>(boundary, 2.0, phase), 0.03);
     }
 
+    // Absorbing glass can only lose energy, smooth or rough (rough cases below)
+    ok &= bounded("absorbing glass", std::make_shared<dielectric>(1.5, 0.0, color(0.5, 0.2, 0.1)));
+
     auto white = std::make_shared<solid_color>(color(1, 1, 1));
     for (double roughness : {0.1, 0.5, 1.0}) {
         auto r = std::to_string(roughness).substr(0, 3);
         ok &= bounded("GGX metal, roughness " + r, std::make_shared<metal>(color(1, 1, 1), roughness));
         ok &= bounded("rough glass, roughness " + r, std::make_shared<dielectric>(1.5, roughness));
+        ok &= bounded("rough absorbing glass, roughness " + r,
+                      std::make_shared<dielectric>(1.5, roughness, color(0.5, 0.2, 0.1)));
         ok &= bounded("principled dielectric, roughness " + r,
                       std::make_shared<principled>(white, 0.0, roughness, 1.5));
         ok &= bounded("principled metallic, roughness " + r,
                       std::make_shared<principled>(white, 1.0, roughness, 1.5));
     }
+
+    // Multiple-scattering compensation: white rough conductors lose nothing.
+    // The sphere pixels average over every view angle; the directional
+    // albedo checks single angles, grazing ones included, with less noise.
+    for (double roughness : {0.5, 1.0}) {
+        auto r = std::to_string(roughness).substr(0, 3);
+        auto white_metal = std::make_shared<metal>(color(1, 1, 1), roughness);
+        ok &= energy_conserving("compensated GGX metal, roughness " + r, white_metal, 0.02);
+        ok &= energy_conserving("compensated principled metallic, roughness " + r,
+                                std::make_shared<principled>(white, 1.0, roughness, 1.5), 0.02);
+        for (double cos_o : {1.0, 0.5, 0.1})
+            ok &= albedo_one("compensated GGX metal, roughness " + r, *white_metal, cos_o, 0.01);
+    }
+
+    // Roughness and metallic from textures: a checkerboard of smooth and rough,
+    // dielectric and metal patches, looked up per hit
+    auto patches = [](double a, double b) {
+        return std::make_shared<checker_texture>(0.2, std::make_shared<solid_color>(color(a, a, a)),
+                                                 std::make_shared<solid_color>(color(b, b, b)));
+    };
+    ok &= bounded("principled, textured roughness and metallic",
+                  std::make_shared<principled>(white, patches(0, 1), patches(0.1, 0.9), 1.5));
+
+    // Normal maps bend the shading normal but must not create energy. The
+    // map below is strongly tilted and varies quickly over the sphere.
+    auto bumps = std::make_shared<wavy_normals>();
+    ok &= furnace("normal mapped mirror", furnace_sphere(std::make_shared<normal_mapped>(
+                      std::make_shared<metal>(color(1, 1, 1), 0.0), bumps)), 1e-6);
+    ok &= bounded("normal mapped lambertian", std::make_shared<normal_mapped>(
+                      std::make_shared<lambertian>(color(1, 1, 1)), bumps));
+    ok &= bounded("normal mapped principled", std::make_shared<normal_mapped>(
+                      std::make_shared<principled>(white, 0.0, 0.3, 1.5), bumps));
     return ok ? 0 : 1;
 }
