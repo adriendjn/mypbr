@@ -133,7 +133,12 @@ Do this when renders start taking minutes, probably around milestone 6.
 
 Known gaps: grey-scale bump (height) maps are skipped, rough glass is not energy-compensated, the denoiser's normal guide ignores normal maps.
 
-## 13. MagicaVoxel look (done 2026-10-17)
+## Validation and showcase (done 2026-10-17)
+
+- ✓ Showcase still life (`scenes/showcase.scene`) using most features at once. PR #8.
+- ✓ Mitsuba 3 comparison (`tools/mitsuba/validate.py`): Cornell box, metal, principled, glass, colored glass and HDRI cases match; the differences left are intended (Kulla-Conty energy, mypbr's layered principled base). It found and fixed too-dark smooth-glass rims (Schlick replaced by exact Fresnel). PR #9.
+
+## 13. MagicaVoxel look (done 2026-10-17, PR #10)
 
 From the analysis "Making mypbr look like MagicaVoxel": the look comes from flat-colored cubes, one soft sun plus a sky, a ground fading into the horizon, ACES, bloom and a shallow depth of field.
 
@@ -149,7 +154,8 @@ Renders: `renders/13-*.png`. Not done: rOBJ/rCAM import (a .vox file's own rende
 
 ## Next ideas
 
-- **Validate against a reference renderer:** render the same scenes in Mitsuba or pbrt (e.g. by exporting a subset of their scene format) and compare images, BSDF by BSDF.
+- Extend the Mitsuba validation to textures, normal maps, fog and meshes.
+- Milestone 13 leftovers: rOBJ/rCAM import, cloud/media voxels, multiple scattering in the sky.
 - Heterogeneous volumes (grid densities, delta tracking).
 - Spectral rendering (wavelengths instead of RGB) for dispersion in glass.
 - Bidirectional path tracing for caustics and hard-to-reach lights.

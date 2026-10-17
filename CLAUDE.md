@@ -14,6 +14,7 @@ camera, height fog, `style voxel` preset). Known gaps: grey-scale
 bump/height maps are skipped with a warning, rough glass is not energy-compensated,
 the denoiser's normal guide ignores normal maps. The BSDFs, area lights and HDRI are
 validated against Mitsuba 3 (`tools/mitsuba/`, results in its README).
+`scenes/showcase.scene` puts most features in one HDRI still life (needs the bunny).
 
 ## Build, test, run
 
@@ -96,6 +97,11 @@ variance; `main` runs `denoiser::run` on the `frame` before every save.
   layer add it back with the Kulla-Conty lobe (`ggx_ms_term`, sampled by a cosine pdf in a
   mixture), so white rough metals pass the furnace test; rough glass is not compensated and
   still only checks "never gains". The E(mu, alpha) table is built on first use (~0.3 s).
+- Smooth glass uses exact Fresnel (`fresnel_dielectric`), not Schlick: Schlick with the incident
+  angle stays near 4% inside the glass up to total internal reflection, darkening rims ~10%.
+- `tools/mitsuba/scene_to_mitsuba.py` refuses features it can't translate (an error, not an
+  approximation); extend it when a new material should be validated. `principled` is 2-3% darker overall
+  than Mitsuba's native principled (up to 23% at rims) by design ((1 - F)(1 - F) base), not a bug.
 - Shadow rays (`sample_light`) use a **normalized** direction so the 0.001 self-hit offset is a
   distance; with the raw `to_light` vector it scaled with the distance to the light.
 - `pdf_test`'s full-sphere environment sampling check has a wide tolerance (0.4 on 4π) because
