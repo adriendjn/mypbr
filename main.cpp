@@ -66,7 +66,12 @@ int main(int argc, char* argv[]) {
     auto& cam = sc.cam;
     cam.threads = threads;
     cam.collect_features = denoise;
-    bvh world(sc.world);
+    // The BVH, plus the objects it can't hold (an infinite ground) beside it
+    auto scene_bvh = std::make_shared<bvh>(sc.world);
+    hittable_list everything(scene_bvh);
+    for (const auto& object : sc.unbounded.objects)
+        everything.add(object);
+    const hittable& world = sc.unbounded.empty() ? static_cast<const hittable&>(*scene_bvh) : everything;
 
     denoiser filter;
     filter.threads = threads;

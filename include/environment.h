@@ -17,7 +17,7 @@
 // about the y axis.
 //
 // It is a hittable only so it can sit in the scene's lights list: hit() never
-// succeeds (rays that miss everything see it through camera::background_color),
+// succeeds (rays that miss everything see it through camera::escaped_radiance),
 // but pdf_value() and random() let next event estimation aim shadow rays at
 // the bright parts of the sky.
 //

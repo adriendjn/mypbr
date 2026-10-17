@@ -7,6 +7,7 @@
 #include "environment.h"
 #include "hittable_list.h"
 #include "material.h"
+#include "sun.h"
 
 #include <algorithm>
 #include <atomic>
@@ -31,6 +32,8 @@ class camera{
         color  background = color(0, 0, 0);  // ...a constant background color
         std::shared_ptr<environment_light> environment;  // HDR sky; overrides both, and
                                                          // must also be in the lights
+        std::shared_ptr<sun_light> sun;  // Added to any of them; must also be in the lights
+        bool   sun_disk_visible = true;  // Whether camera rays see the sun itself
 
         double defocus_angle = 0;  // Variation angle of rays through each pixel
         double focus_dist    = 10; // Distance from camera lookfrom point to plane of perfect focus
@@ -329,11 +332,12 @@ class camera{
                     // The sky is a light too: weighted against light sampling
                     // like emission. A constant background is not in lights,
                     // so its light pdf is 0 and the weight comes out as 1.
+                    color sky = escaped_radiance(r.direction(), depth == 0);
                     if (specular || lights.empty()) {
-                        radiance += beta * background_color(r);
+                        radiance += beta * sky;
                     } else {
                         auto light_pdf = lights.pdf_value(prev_point, r.direction());
-                        radiance += beta * background_color(r) * power_heuristic(scatter_pdf, light_pdf);
+                        radiance += beta * sky * power_heuristic(scatter_pdf, light_pdf);
                     }
                     break;
                 }
@@ -423,23 +427,33 @@ class camera{
             color emission;
             if (world.hit(shadow, interval(0.001, infinity), light_rec))
                 emission = light_rec.mat->emitted(shadow, light_rec);
-            else if (environment)
-                emission = environment->radiance(to_light);  // Reached the sky
             else
-                return color(0, 0, 0);
+                emission = escaped_radiance(to_light, false);  // Reached the sky or the sun
             auto weight = last_bounce ? 1.0 : power_heuristic(light_pdf, bsdf_pdf.value(to_light));
             return f * emission * (weight / light_pdf);
         }
 
-        // Radiance arriving from a direction that hits nothing.
-        color background_color(const ray& r) const {
-            if (environment)
-                return environment->radiance(r.direction());
-            if (!use_sky)
-                return background;
-            vec3 unit_direction = unit_vector(r.direction());
-            auto a = 0.5*(unit_direction.y() + 1.0);
-            return (1.0 - a) * color(1.0, 1.0, 1.0) + a*color(0.5, 0.7, 1.0);
+        // Radiance arriving from a direction that hits nothing: the sky (an
+        // environment map, the gradient or a constant) plus the sun.
+        //
+        // Shadow rays count all of it, even the parts that aren't in lights
+        // (the gradient, a constant background): the BSDF ray that escapes
+        // the same way is weighted with the same light density, so the two
+        // weights still add up to 1 wherever light sampling can go.
+        color escaped_radiance(const vec3& direction, bool camera_ray) const {
+            color sky;
+            if (environment) {
+                sky = environment->radiance(direction);
+            } else if (!use_sky) {
+                sky = background;
+            } else {
+                vec3 unit_direction = unit_vector(direction);
+                auto a = 0.5*(unit_direction.y() + 1.0);
+                sky = (1.0 - a) * color(1.0, 1.0, 1.0) + a*color(0.5, 0.7, 1.0);
+            }
+            if (sun && (sun_disk_visible || !camera_ray))
+                sky += sun->radiance(direction);
+            return sky;
         }
 };
 

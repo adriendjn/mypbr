@@ -8,8 +8,10 @@
 #include "material.h"
 #include "medium.h"
 #include "obj_loader.h"
+#include "plane.h"
 #include "quad.h"
 #include "sphere.h"
+#include "sun.h"
 #include "texture.h"
 #include "tonemap.h"
 #include "transform.h"
@@ -27,6 +29,8 @@
 class scene{
     public:
         hittable_list    world;
+        hittable_list    unbounded;  // Objects without a finite bounding box (the
+                                     // ground), tested beside world's BVH
         light_list       lights;   // Emissive objects (also part of world) and the environment
         camera           cam;
         display_settings display;  // How radiance becomes PNG/PPM pixels
@@ -89,6 +93,17 @@ class scene{
 //   environment  textures/sky.hdr  [intensity 1] [rotate 0]
 //                              # equirectangular HDR sky that also lights the scene
 //                              # (importance sampled); rotate turns it about y, in degrees
+//   sun elevation 50 azimuth 45 [intensity 3] [color 1 1 1] [angle 4] [disk on]
+//                              # distant light: elevation above the horizon and
+//                              # azimuth (from -z towards +x) in degrees; intensity is
+//                              # the irradiance on a surface facing it; angle is its
+//                              # angular diameter in degrees (softer shadows when
+//                              # larger, same brightness); disk off hides the sun
+//                              # itself from the camera. "sun off" removes it
+//   sky uniform 0.5 0.6 0.8    # sky of constant radiance (importance sampled like an
+//                              # environment); "sky gradient" is the default sky
+//   ground [height 0] [material]   # infinite plane y = height (default grey
+//                              # lambertian); "ground off" removes it
 //   light_selection power      # how next event estimation picks a light: power (the
 //                              # default, in proportion to emitted power) or uniform
 //   exposure     0             # stops; display images are scaled by 2^exposure
@@ -319,6 +334,23 @@ inline bool load_scene(const std::string& path, scene& result) {
         return true;
     };
 
+    // The sun, sky and ground are created at the end of the file, so later
+    // lines can change what earlier ones set
+    class sun_settings{
+        public:
+            bool   on = false;
+            double elevation = 45, azimuth = 45;  // Degrees
+            double intensity = 3;                 // Irradiance
+            color  tint = color(1, 1, 1);
+            double angle = 4;                     // Angular diameter, degrees
+            bool   disk = true;
+    } sun;
+    bool   sky_uniform = false;
+    color  sky_radiance;
+    bool   ground = false;
+    double ground_height = 0;
+    std::shared_ptr<material> ground_material = default_material;
+
     // Meshes already loaded, by file and default material, so repeated
     // "mesh" lines share geometry and only add instances.
     std::map<std::tuple<std::string, bool, const material*, bool>, std::vector<obj_part>> mesh_cache;
@@ -418,6 +450,58 @@ inline bool load_scene(const std::string& path, scene& result) {
                 return fail(line_number, "only one environment is allowed");
             cam.environment = sky;
             lights.add(sky);  // Sampled by next event estimation; never hit, so not in world
+        } else if (keyword == "sun") {
+            const char* usage = "expected 'sun elevation <deg> azimuth <deg> [intensity <E>] [color <r g b>] "
+                                "[angle <deg>] [disk on|off]' or 'sun off'";
+            std::string key;
+            sun.on = true;
+            while (in >> key) {
+                bool ok = true;
+                if (key == "off")            sun.on = false;
+                else if (key == "elevation") ok = bool(in >> sun.elevation) && sun.elevation >= -90 && sun.elevation <= 90;
+                else if (key == "azimuth")   ok = bool(in >> sun.azimuth);
+                else if (key == "intensity") ok = bool(in >> sun.intensity) && sun.intensity >= 0;
+                else if (key == "color")     ok = bool(in >> sun.tint[0] >> sun.tint[1] >> sun.tint[2]);
+                else if (key == "angle")     ok = bool(in >> sun.angle) && sun.angle > 0 && sun.angle < 90;
+                else if (key == "disk") {
+                    std::string value;
+                    ok = bool(in >> value) && (value == "on" || value == "off");
+                    sun.disk = value == "on";
+                } else ok = false;
+                if (!ok)
+                    return fail(line_number, usage);
+            }
+        } else if (keyword == "sky") {
+            std::string type;
+            if (!(in >> type))
+                return fail(line_number, "expected 'sky uniform <r g b>' or 'sky gradient'");
+            if (type == "uniform") {
+                if (!(in >> sky_radiance[0] >> sky_radiance[1] >> sky_radiance[2]))
+                    return fail(line_number, "expected 'sky uniform <r g b>'");
+                sky_uniform = true;
+                cam.use_sky = true;
+            } else if (type == "gradient") {
+                sky_uniform = false;
+                cam.use_sky = true;
+            } else {
+                return fail(line_number, "unknown sky type '" + type + "' (expected uniform or gradient)");
+            }
+        } else if (keyword == "ground") {
+            std::string key;
+            ground = true;
+            while (in >> key) {
+                if (key == "off") {
+                    ground = false;
+                } else if (key == "height") {
+                    if (!(in >> ground_height))
+                        return fail(line_number, "expected 'ground [height <y>] [material]'");
+                } else {
+                    auto it = materials.find(key);
+                    if (it == materials.end())
+                        return fail(line_number, "unknown material '" + key + "'");
+                    ground_material = it->second;
+                }
+            }
         } else if (keyword == "exposure") {
             if (!(in >> result.display.exposure))
                 return fail(line_number, "expected 'exposure <stops>'");
@@ -757,6 +841,24 @@ inline bool load_scene(const std::string& path, scene& result) {
 
     if (world.empty())
         return fail(line_number, "the scene has no objects");
+
+    if (sky_uniform) {
+        if (cam.environment)
+            return fail(line_number, "'sky uniform' and 'environment' can't be used together");
+        // A tiny constant image: importance sampling then reduces to uniform
+        // sampling over the sphere
+        cam.environment = std::make_shared<environment_light>(8, 4, std::vector<color>(32, sky_radiance));
+        lights.add(cam.environment);
+    }
+    if (sun.on) {
+        double el = degrees_to_radians(sun.elevation), az = degrees_to_radians(sun.azimuth);
+        vec3 direction(std::cos(el) * std::sin(az), std::sin(el), -std::cos(el) * std::cos(az));
+        cam.sun = std::make_shared<sun_light>(direction, sun.angle, sun.intensity * sun.tint);
+        cam.sun_disk_visible = sun.disk;
+        lights.add(cam.sun);
+    }
+    if (ground)
+        result.unbounded.add(std::make_shared<ground_plane>(ground_height, ground_material));
     if (fog_material) {
         auto extent = world.bounding_box();
         point3 lo(extent.x.min, extent.y.min, extent.z.min);
