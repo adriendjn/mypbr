@@ -128,7 +128,9 @@ class scene{
 //                                                     # and materials (see voxel.h);
 //                                                     # one voxel is one unit, z-up
 //                                                     # turned to y-up; emission scales
-//                                                     # the emissive voxels
+//                                                     # the emissive voxels; quads uses
+//                                                     # faces in a BVH instead of the
+//                                                     # voxel grid (same image, slower)
 //
 // Any object can be followed by transforms, applied in the order given:
 //
@@ -791,22 +793,27 @@ inline bool load_scene(const std::string& path, scene& result) {
             vox_file vox;
             if (!load_vox(file, vox, error))
                 return fail(line_number, error);
-            auto palette = make_voxel_palette(vox, emission);
+            auto palette = std::make_shared<voxel_palette>(make_voxel_palette(vox, emission));
 
-            // Geometry per model, shared by the instances that place it
+            // Geometry per model, shared by the instances that place it: a
+            // voxel grid, or with "quads" its visible faces in a BVH (slower,
+            // kept as a reference). Emissive faces are lights either way;
+            // with a grid they are only sampled, the grid itself is hit.
             std::vector<std::shared_ptr<hittable>> geometry(vox.models.size());
             std::vector<std::shared_ptr<hittable_list>> emitters(vox.models.size());
             size_t faces = 0;
-            (void)quads;  // Quads are the only geometry for now
             for (size_t m = 0; m < vox.models.size(); m++) {
                 hittable_list list;
                 emitters[m] = std::make_shared<hittable_list>();
-                voxel_model_faces(vox.models[m], palette, list, *emitters[m]);
+                voxel_model_faces(vox.models[m], *palette, list, *emitters[m]);
                 faces += list.objects.size();
-                geometry[m] = std::make_shared<bvh>(list);
+                if (quads)
+                    geometry[m] = std::make_shared<bvh>(list);
+                else
+                    geometry[m] = voxel_blocks(std::make_shared<vox_model>(vox.models[m]), palette);
             }
             std::clog << "Loaded " << file << ": " << vox.models.size() << " models, "
-                      << vox.instances.size() << " instances, " << faces << " faces\n";
+                      << vox.instances.size() << " instances, " << faces << " visible faces\n";
 
             // MagicaVoxel is z-up: turn its +z to mypbr's +y (and +y to -z)
             transform z_up = transform::rotate(-90, vec3(1, 0, 0));
