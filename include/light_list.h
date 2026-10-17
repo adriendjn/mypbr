@@ -20,6 +20,13 @@
 // unbiased whatever the weights are, and the MIS weights that ray_color
 // computes when BSDF sampling hits a light use the same density NEE used.
 //
+// Power is a global measure: it ignores distance and occlusion, so a lamp
+// that is weak overall but lights most of the visible scene, or a sky whose
+// bright sun is blocked, can be badly under-sampled, and the cost of that is
+// unbounded (variance grows like 1 / p_k) while the gain of power over uniform
+// selection is bounded. So a fixed fraction of the choices stays uniform
+// (defensive sampling), which bounds p_k below by uniform_fraction / n.
+//
 // It is a hittable_list so the camera can keep taking one: only pdf_value()
 // and random() (both virtual) change.
 class light_list : public hittable_list{
@@ -27,6 +34,7 @@ class light_list : public hittable_list{
         enum class selection { uniform, power };
 
         selection strategy = selection::power;
+        double uniform_fraction = 0.2;  // Share of power selection that stays uniform
 
         // Computes the selection probabilities; call once every light is
         // added and before rendering (it is not thread safe). The scene bounds
@@ -62,11 +70,12 @@ class light_list : public hittable_list{
                 }
 
                 // A light whose power is unknown (or 0) gets the average power
-                // of the others rather than 0. Probability 0 would still be
-                // unbiased: pdf_value() would be 0 towards it, so emission found
-                // by BSDF sampling would get the full MIS weight. But only BSDF
-                // sampling would ever find it, which is very noisy for a small
-                // light that does emit.
+                // of the others rather than 0, which would leave it only the
+                // uniform share. Even probability 0 would be unbiased:
+                // pdf_value() would be 0 towards it, so emission found by BSDF
+                // sampling would get the full MIS weight (power_heuristic(p, 0)
+                // = 1). But only BSDF sampling would ever find it, which is very
+                // noisy for a small light that does emit.
                 double fallback = known > 0 ? known_sum / known : 1.0;
                 double total = 0;
                 for (auto& p : power) {
@@ -75,7 +84,7 @@ class light_list : public hittable_list{
                     total += p;
                 }
                 for (size_t k = 0; k < n; k++)
-                    probabilities[k] = power[k] / total;
+                    probabilities[k] = (1 - uniform_fraction) * power[k] / total + uniform_fraction / n;
             }
 
             cdf.assign(n + 1, 0.0);
