@@ -150,5 +150,36 @@ int main() {
         }
     }
 
+    // Rough metal mixes VNDF sampling with a cosine pdf for its multiple-
+    // scattering lobe; the mixture it hands the integrator must stay normalized.
+    hit_record rec{};
+    rec.normal = normal;
+    rec.front_face = true;
+    for (double roughness : {0.5, 1.0}) {
+        auto r = std::to_string(roughness).substr(0, 3);
+        metal rough_gold(color(1.0, 0.78, 0.34), roughness);
+        for (vec3 wo : {vec3(0, 0, 1), unit_vector(vec3(1, 0.2, 0.15))}) {
+            scatter_record srec;
+            rough_gold.scatter(ray(wo, -wo), rec, srec);
+            ok &= check("rough metal pdf, roughness " + r, integral_defensive(*srec.pdf_ptr),
+                        valid_fraction(*srec.pdf_ptr), 0.02);
+        }
+
+        // The compensation lobe f_ms cos_i must integrate to the 1 - E(mu_o)
+        // that single scattering misses (with cosine sampling: E[f / pdf])
+        double alpha = roughness_to_alpha(roughness);
+        cosine_pdf hemisphere_pdf(normal);
+        for (double cos_o : {1.0, 0.5, 0.1}) {
+            const int n = 400000;
+            double sum = 0;
+            for (int i = 0; i < n; i++) {
+                vec3 d = unit_vector(hemisphere_pdf.generate());
+                sum += ggx_ms_eval(cos_o, d.z(), alpha) / hemisphere_pdf.value(d);
+            }
+            ok &= check("multiple-scattering lobe energy, roughness " + r + ", cos_o " + std::to_string(cos_o).substr(0, 3),
+                        sum / n, ggx_ms_albedo(cos_o, alpha), 0.005);
+        }
+    }
+
     return ok ? 0 : 1;
 }

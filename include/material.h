@@ -81,6 +81,9 @@ class lambertian : public material{
 // Conductor with a GGX microfacet BRDF. Roughness 0 is a perfect mirror
 // (handled as specular); larger values blur the reflection. Fresnel uses
 // Schlick's approximation with the albedo as the normal-incidence color.
+// A Kulla-Conty lobe adds back the light single-scattering GGX loses to
+// bounces between microfacets, so a white metal reflects everything at any
+// roughness.
 class metal : public material{
     public:
         metal(const color& albedo, double roughness)
@@ -96,12 +99,26 @@ class metal : public material{
                 return true;
             }
             srec.attenuation = albedo;
-            srec.pdf_ptr = std::make_shared<ggx_reflection_pdf>(rec.normal, -r_in.direction(), alpha);
+            auto spec = std::make_shared<ggx_reflection_pdf>(rec.normal, -r_in.direction(), alpha);
             srec.skip_pdf = false;
+
+            // The compensation lobe is near-diffuse: sample it with a cosine
+            // pdf, chosen in proportion to its share of the reflected energy
+            // (single scatter keeps about E(mu_o) F, the lobe adds (1 - E) F_ms)
+            double cos_o = std::fmax(0.0, dot(rec.normal, unit_vector(-r_in.direction())));
+            double ms_weight = ggx_ms_albedo(cos_o, alpha) * average(ggx_ms_fresnel(albedo, alpha));
+            double ss_weight = ggx_albedo_table::get().E(cos_o, alpha) * average(fresnel_schlick(cos_o, albedo));
+            if (ms_weight <= 0) {
+                srec.pdf_ptr = spec;
+                return true;
+            }
+            double p_spec = std::clamp(ss_weight / (ss_weight + ms_weight), 0.1, 1.0);
+            srec.pdf_ptr = std::make_shared<mixture_pdf>(spec, std::make_shared<cosine_pdf>(rec.normal), p_spec);
             return true;
         }
 
-        // D * G * F / (4 cos_o): the BRDF D G F / (4 cos_o cos_i) times cos_i.
+        // D * G * F / (4 cos_o): the BRDF D G F / (4 cos_o cos_i) times cos_i,
+        // plus the multiple-scattering lobe F_ms f_ms cos_i.
         color eval(const ray& r_in, const hit_record& rec, const vec3& direction) const override {
             onb frame(rec.normal);
             vec3 wo = unit_vector(frame.to_local(-r_in.direction()));
@@ -110,13 +127,16 @@ class metal : public material{
                 return color(0, 0, 0);
             vec3 h = unit_vector(wo + wi);
             ggx dist(alpha);
-            return fresnel_schlick(dot(wi, h), albedo) * (dist.D(h) * dist.G(wo, wi) / (4 * wo.z()));
+            return fresnel_schlick(dot(wi, h), albedo) * (dist.D(h) * dist.G(wo, wi) / (4 * wo.z()))
+                 + ggx_ms_term(wo.z(), wi.z(), alpha, albedo);
         }
 
     private:
         color albedo;
         double roughness;
         double alpha;
+
+        static double average(const color& c) { return (c.x() + c.y() + c.z()) / 3; }
 };
 
 // Glass-like material. With roughness 0 it is perfectly smooth (specular
@@ -192,7 +212,9 @@ class dielectric : public material{
 // with the given ior (about 4% for 1.5), or the base color when metallic.
 // The diffuse base only receives the light the specular layer lets through,
 // on the way in and on the way out, which keeps the total reflectance at or
-// below one (checked by the furnace test).
+// below one (checked by the furnace test). The specular layer gets the same
+// multiple-scattering compensation as metal; for a dielectric f0 (0.04) its
+// F_ms is about F_avg^2 < 1%, which the (1 - F) factors leave room for.
 class principled : public material{
     public:
         principled(std::shared_ptr<texture> base_color, double metallic, double roughness, double ior)
@@ -210,6 +232,8 @@ class principled : public material{
             // Pick the specular lobe in proportion to its estimated share of the reflected light
             double spec_weight = average(fresnel_schlick(cos_o, specular_f0(base)));
             double diff_weight = (1 - metallic) * average(base) * (1 - fresnel_schlick(cos_o, dielectric_f0));
+            // The near-diffuse multiple-scattering lobe is left to the cosine pdf as well
+            diff_weight += ggx_ms_albedo(cos_o, alpha) * average(ggx_ms_fresnel(specular_f0(base), alpha));
             double p_spec = spec_weight + diff_weight > 0 ? spec_weight / (spec_weight + diff_weight) : 1;
             p_spec = std::clamp(p_spec, 0.1, 1.0);
 
@@ -232,7 +256,8 @@ class principled : public material{
             vec3 h = unit_vector(wo + wi);
             ggx dist(alpha);
             color specular = fresnel_schlick(dot(wi, h), specular_f0(base))
-                           * (dist.D(h) * dist.G(wo, wi) / (4 * wo.z()));
+                           * (dist.D(h) * dist.G(wo, wi) / (4 * wo.z()))
+                           + ggx_ms_term(wo.z(), wi.z(), alpha, specular_f0(base));
 
             double transmitted = (1 - fresnel_schlick(wi.z(), dielectric_f0))
                                * (1 - fresnel_schlick(wo.z(), dielectric_f0));
