@@ -8,6 +8,11 @@
 
 using color = vec3;
 
+// Perceived brightness of linear Rec. 709 / sRGB primaries.
+inline double luminance(const color& c) {
+    return 0.2126 * c.x() + 0.7152 * c.y() + 0.0722 * c.z();
+}
+
 // The sRGB transfer curve (IEC 61966-2-1): linear light to encoded value.
 inline double linear_to_srgb(double linear_component) {
     if (linear_component <= 0)

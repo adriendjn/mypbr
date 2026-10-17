@@ -41,7 +41,7 @@ static void render_furnace(std::shared_ptr<hittable> object, double& mean, doubl
         lights.add(cam.environment);
     }
 
-    auto pixels = cam.render(world, lights);
+    auto pixels = cam.render(world, lights).radiance;
 
     worst = 0;
     double sum = 0;
