@@ -117,10 +117,6 @@ class environment_light : public hittable{
         std::vector<double> row_weight;       // Unnormalized weight of each row
         double total_weight = 0;
 
-        static double luminance(const color& c) {
-            return 0.2126 * c.x() + 0.7152 * c.y() + 0.0722 * c.z();
-        }
-
         // Pixel weight before normalization: brightness times the solid angle
         // of its row (rows near the poles are squeezed into tiny solid angles).
         double weight(int i, int j) const {
