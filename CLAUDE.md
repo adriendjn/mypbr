@@ -27,7 +27,7 @@ the only other translation unit (stb, compiled as a SYSTEM library).
 | `camera.h` | Camera setup, tiled multithreaded progressive render, and the integrator (`ray_color`, `sample_light`). |
 | `denoiser.h` | `frame` (radiance + albedo/normal/variance guides) and `denoiser`: firefly clamp, then SVGF-style edge-avoiding à-trous filter on radiance / albedo. |
 | `material.h` | `material` interface; `lambertian`, `metal`, `dielectric`, `principled`, `diffuse_light`. |
-| `microfacet.h` | GGX distribution + Smith G, Fresnel, VNDF reflection sampling, rough dielectric BSDF. |
+| `microfacet.h` | GGX distribution + Smith G, Fresnel, VNDF reflection sampling, Kulla-Conty multiple-scattering compensation (`ggx_albedo_table`, `ggx_ms_term`), rough dielectric BSDF. |
 | `environment.h` | `environment_light`: equirectangular HDR sky, importance sampled with a 2D CDF; lives in `lights` and `camera::environment`. |
 | `medium.h` | `constant_medium` (homogeneous fog in a convex boundary, free-flight sampling in `hit`) and `phase_material` (Henyey-Greenstein). |
 | `pdf.h` | Direction densities: `cosine_pdf`, `hittable_pdf` (light sampling), `mixture_pdf`. |
@@ -70,8 +70,10 @@ variance; `main` runs `denoiser::run` on the `frame` before every save.
 - A material with `skip_pdf = false` must make `eval` consistent with its `pdf_ptr`,
   or MIS gives wrong results. Delta lobes (roughness 0 metal/glass) use `skip_pdf`.
 - `metal r g b x`: x is **GGX roughness** (alpha = roughness², min 1e-3), not RTiOW fuzz.
-- Single-scattering GGX loses energy at high roughness, so rough metals look darker
-  than expected; the furnace test only checks they never *gain* energy.
+- Single-scattering GGX loses energy at high roughness. `metal` and `principled`'s specular
+  layer add it back with the Kulla-Conty lobe (`ggx_ms_term`, sampled by a cosine pdf in a
+  mixture), so white rough metals pass the furnace test; rough glass is not compensated and
+  still only checks "never gains". The E(mu, alpha) table is built on first use (~0.3 s).
 - Lights are one-sided (`diffuse_light` emits on the front face only) and must be in
   both `world` and `lights`; the scene loader does this for emissive objects.
   Transformed lights must be similarity transforms (sampling pdfs assume it).
