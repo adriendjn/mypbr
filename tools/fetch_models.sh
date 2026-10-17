@@ -1,6 +1,7 @@
 #!/bin/sh
 # Downloads the large test meshes used by scenes/bunny_cornell.scene and
-# scenes/sponza.scene into models/external/ (ignored by git). The URLs are
+# scenes/sponza.scene, and the MagicaVoxel models of scenes/vox_*.scene,
+# into models/external/ (ignored by git). The URLs are
 # pinned to fixed commits so the files never change under the scenes.
 set -e
 cd "$(dirname "$0")/.."
@@ -42,3 +43,10 @@ for t in $(awk '$1 == "map_Disp" || $1 == "map_Bump" || $1 == "map_bump" || $1 =
                models/external/sponza.mtl | tr -d '\r' | sort -u); do
     fetch "$t" "$SPONZA/$t"
 done
+
+# MagicaVoxel sample models by ephtracy (MIT license), for scenes/vox_*.scene
+VOX=https://raw.githubusercontent.com/ephtracy/voxel-model/3bff8feaa7d94a6237f2c07dc4ca3c3d268ef06c/vox
+fetch monu1.vox "$VOX/monument/monu1.vox"
+fetch monu10.vox "$VOX/monument/monu10.vox"
+fetch teapot.vox "$VOX/scan/teapot.vox"
+fetch chr_knight.vox "$VOX/character/chr_knight.vox"

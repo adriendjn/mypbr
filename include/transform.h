@@ -46,6 +46,18 @@ class transform{
             return x;
         }
 
+        // The linear map of an orthogonal matrix (a rotation, possibly with a
+        // mirror), whose inverse is its transpose.
+        static transform orthogonal(const double r[3][3]) {
+            transform x;
+            for (int i = 0; i < 3; i++)
+                for (int j = 0; j < 3; j++) {
+                    x.m[i][j] = r[i][j];
+                    x.inv_m[j][i] = r[i][j];
+                }
+            return x;
+        }
+
         // The transform that applies first, then this one.
         transform then_after(const transform& first) const {
             transform x;

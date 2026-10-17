@@ -13,6 +13,7 @@
 #include "texture.h"
 #include "tonemap.h"
 #include "transform.h"
+#include "voxel.h"
 
 #include <fstream>
 #include <iostream>
@@ -100,6 +101,14 @@ class scene{
 //                                                     # to the scene file; smooth
 //                                                     # makes vertex normals if the
 //                                                     # file has none
+//
+//   vox    models/island.vox  [quads] [emission 1]    # MagicaVoxel model or scene:
+//                                                     # every model the file's scene
+//                                                     # graph places, with its palette
+//                                                     # and materials (see voxel.h);
+//                                                     # one voxel is one unit, z-up
+//                                                     # turned to y-up; emission scales
+//                                                     # the emissive voxels
 //
 // Any object can be followed by transforms, applied in the order given:
 //
@@ -636,6 +645,74 @@ inline bool load_scene(const std::string& path, scene& result) {
             if (it == materials.end() || !std::dynamic_pointer_cast<phase_material>(it->second))
                 return fail(line_number, "expected a volume material, got '" + name + "'");
             fog_material = it->second;
+        } else if (keyword == "vox") {
+            const char* usage = "expected 'vox <file.vox> [quads] [emission <scale>] [transforms]'";
+            std::string file, token, error;
+            if (!(in >> file))
+                return fail(line_number, usage);
+            if (file[0] != '/')
+                file = scene_dir + file;
+            // Options come first; the rest are transforms
+            bool quads = false;
+            double emission = 1;
+            std::vector<std::string> rest;
+            while (in >> token)
+                rest.push_back(token);
+            size_t k = 0;
+            for (; k < rest.size(); k++) {
+                if (rest[k] == "quads") {
+                    quads = true;
+                } else if (rest[k] == "emission" && k + 1 < rest.size()) {
+                    std::istringstream number(rest[++k]);
+                    if (!(number >> emission) || emission < 0)
+                        return fail(line_number, usage);
+                } else {
+                    break;
+                }
+            }
+            std::string tail_text;
+            for (; k < rest.size(); k++)
+                tail_text += rest[k] + ' ';
+            std::istringstream tail(tail_text);
+            std::shared_ptr<material> mat;
+            transform xform;
+            bool transformed;
+            if (!read_tail(tail, mat, xform, transformed, error))
+                return fail(line_number, error);
+            if (mat != default_material)
+                return fail(line_number, "vox models take their materials from the file's palette");
+
+            vox_file vox;
+            if (!load_vox(file, vox, error))
+                return fail(line_number, error);
+            auto palette = make_voxel_palette(vox, emission);
+
+            // Geometry per model, shared by the instances that place it
+            std::vector<std::shared_ptr<hittable>> geometry(vox.models.size());
+            std::vector<std::shared_ptr<hittable_list>> emitters(vox.models.size());
+            size_t faces = 0;
+            (void)quads;  // Quads are the only geometry for now
+            for (size_t m = 0; m < vox.models.size(); m++) {
+                hittable_list list;
+                emitters[m] = std::make_shared<hittable_list>();
+                voxel_model_faces(vox.models[m], palette, list, *emitters[m]);
+                faces += list.objects.size();
+                geometry[m] = std::make_shared<bvh>(list);
+            }
+            std::clog << "Loaded " << file << ": " << vox.models.size() << " models, "
+                      << vox.instances.size() << " instances, " << faces << " faces\n";
+
+            // MagicaVoxel is z-up: turn its +z to mypbr's +y (and +y to -z)
+            transform z_up = transform::rotate(-90, vec3(1, 0, 0));
+            for (const auto& placed : vox.instances) {
+                transform to_world = xform.then_after(z_up.then_after(placed.xform));
+                world.add(std::make_shared<instance>(geometry[placed.model], to_world));
+                if (!emitters[placed.model]->empty()) {
+                    if (!to_world.is_similarity())
+                        return fail(line_number, "a vox model with emissive voxels can only be scaled uniformly");
+                    lights.add(std::make_shared<instance>(emitters[placed.model], to_world));
+                }
+            }
         } else if (keyword == "mesh") {
             std::string file, error;
             std::shared_ptr<material> mat;
