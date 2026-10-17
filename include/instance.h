@@ -52,6 +52,9 @@ class instance : public hittable{
             return xform.apply_vector(object->random(xform.apply_inverse_point(origin)));
         }
 
+        // Radiance is unchanged by the transform; power scales with area.
+        double power() const override { return object->power() * xform.area_scale(); }
+
     private:
         std::shared_ptr<hittable> object;
         transform xform;

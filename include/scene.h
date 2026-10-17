@@ -4,6 +4,7 @@
 #include "camera.h"
 #include "hittable_list.h"
 #include "instance.h"
+#include "light_list.h"
 #include "material.h"
 #include "medium.h"
 #include "obj_loader.h"
@@ -25,7 +26,7 @@
 class scene{
     public:
         hittable_list    world;
-        hittable_list    lights;   // Emissive objects (also part of world) and the environment
+        light_list       lights;   // Emissive objects (also part of world) and the environment
         camera           cam;
         display_settings display;  // How radiance becomes PNG/PPM pixels
 };
@@ -87,6 +88,8 @@ class scene{
 //   environment  textures/sky.hdr  [intensity 1] [rotate 0]
 //                              # equirectangular HDR sky that also lights the scene
 //                              # (importance sampled); rotate turns it about y, in degrees
+//   light_selection power      # how next event estimation picks a light: power (the
+//                              # default, in proportion to emitted power) or uniform
 //   exposure     0             # stops; display images are scaled by 2^exposure
 //   tonemap      aces          # none (clamp, the default), reinhard or aces
 //
@@ -125,7 +128,8 @@ class scene{
 // material name gets a default grey Lambertian.
 //
 // Every object with an emissive material is also added to lights, so the
-// renderer can sample it directly.
+// renderer can sample it directly; lights are picked in proportion to their
+// power (see light_list.h) unless light_selection says uniform.
 //
 // Returns false and prints the offending line on std::cerr on error.
 inline bool load_scene(const std::string& path, scene& result) {
@@ -379,6 +383,11 @@ inline bool load_scene(const std::string& path, scene& result) {
                 return fail(line_number, "expected 'background <r> <g> <b>'");
             cam.use_sky = false;
             cam.background = color(r, g, b);
+        } else if (keyword == "light_selection") {
+            std::string mode;
+            if (!(in >> mode) || (mode != "power" && mode != "uniform"))
+                return fail(line_number, "expected 'light_selection power|uniform'");
+            lights.strategy = mode == "power" ? light_list::selection::power : light_list::selection::uniform;
         } else if (keyword == "environment") {
             std::string file, key;
             double intensity = 1, rotation = 0;
@@ -680,6 +689,7 @@ inline bool load_scene(const std::string& path, scene& result) {
     if ((cam.lookfrom - cam.lookat).near_zero() || cross(cam.vup, cam.lookfrom - cam.lookat).near_zero())
         return fail(line_number, "camera lookfrom must differ from lookat, and vup must not point along the view");
 
+    lights.build(world.bounding_box());
     return true;
 }
 

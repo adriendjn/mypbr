@@ -61,6 +61,14 @@ class hittable_list : public hittable{
             return objects[index]->random(origin);
         }
 
+        // A list used as one light (e.g. the sides of a box) emits what its parts emit.
+        double power() const override {
+            double sum = 0;
+            for (const auto& object : objects)
+                sum += object->power();
+            return sum;
+        }
+
     private:
         aabb bbox;
 };

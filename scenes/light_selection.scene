@@ -1,0 +1,35 @@
+# The HDR quarry sky (sun behind the camera) plus one small, bright lamp:
+# next event estimation picks between them. Uniform selection sends half of
+# the shadow rays to the lamp, which emits 0.6% of the light (sky: pi R^2
+# times its radiance integrated over the sphere, R the scene's radius); power
+# selection (the default) gives the sky 90% of them: 99.4% by power, with 20%
+# of the choices kept uniform as a safeguard (see light_list.h). Compare with
+# "light_selection uniform" (renders/12-light-selection-*.png).
+#
+# textures/quarry_01_1k.hdr: "Quarry 01" by Greg Zaal, Poly Haven (CC0).
+
+image_width  480
+aspect_ratio 16/9
+samples_per_pixel 16
+max_depth    16
+
+camera lookfrom 0 1.2 5  lookat 0 0.45 0  vfov 32
+
+environment ../textures/quarry_01_1k.hdr  rotate 280
+exposure    -1
+tonemap     aces
+light_selection power
+
+material floor  principled color 0.6 0.6 0.6 roughness 0.6
+material white  lambertian 0.8 0.8 0.8
+material gold   metal 1.0 0.78 0.34 0.25
+material glass  dielectric 1.5
+material paint  principled color 0.7 0.08 0.05 roughness 0.3
+material lamp   emissive 15 12 9
+
+quad   -6 0 -6  12 0 0  0 0 12  floor
+sphere -1.65 0.5 0    0.5  white
+sphere -0.55 0.5 0    0.5  gold
+sphere  0.55 0.5 0    0.5  glass
+sphere  1.65 0.5 0    0.5  paint
+sphere  0    0.15 1.0 0.15 lamp

@@ -78,6 +78,8 @@ class quad : public hittable{
             return p - origin;
         }
 
+        double power() const override { return pi * area * luminance(mat->average_emission()); }
+
     private:
         point3 Q;
         vec3 u, v;

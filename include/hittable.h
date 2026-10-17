@@ -51,6 +51,12 @@ class hittable{
             (void)origin;
             return vec3(1, 0, 0);
         }
+
+        // Luminance of the total power (flux) the object emits, used to pick
+        // lights in proportion to it. A one-sided diffuse emitter of area A
+        // and radiance L emits pi * A * L: the integral of L cos(theta) over
+        // the hemisphere is pi L. 0 means unknown (or not a light).
+        virtual double power() const { return 0; }
 };
 
 #endif

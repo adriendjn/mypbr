@@ -3,6 +3,8 @@
 
 #include <environment.h>
 #include <hittable_list.h>
+#include <instance.h>
+#include <light_list.h>
 #include <material.h>
 #include <microfacet.h>
 #include <pdf.h>
@@ -154,8 +156,62 @@ int main() {
     environment_light sky(sky_w, sky_h, sky_pixels, 1.0, 30.0);
     hittable_pdf to_sky(sky, origin);
     ok &= check("environment pdf integral", integral_defensive(to_sky), 1.0, 0.02);
-    ok &= check("environment sampling", cap_solid_angle(to_sky, vec3(0, 1, 0), -1.0), 4 * pi, 0.15);
+    // Standard deviation about 0.08: dim sky directions are rare and weigh 1 / pdf
+    ok &= check("environment sampling", cap_solid_angle(to_sky, vec3(0, 1, 0), -1.0), 4 * pi, 0.4);
     ok &= check("environment upper hemisphere", cap_solid_angle(to_sky, vec3(0, 1, 0), 0.0), 2 * pi, 0.15);
+
+    // Power-weighted light selection, with lights of very different power:
+    // the sky above, a small bright lamp, a big dim panel (scaled up by an
+    // instance) and a lamp whose power is unknown.
+    auto lamp_mat = std::make_shared<diffuse_light>(color(50, 50, 50));
+    auto dim_mat = std::make_shared<diffuse_light>(color(0.5, 0.5, 0.5));
+    auto shared_sky = std::make_shared<environment_light>(sky_w, sky_h, sky_pixels, 1.0, 30.0);
+    light_list mixed;
+    mixed.add(shared_sky);
+    mixed.add(std::make_shared<quad>(point3(-0.2, 1, -0.2), vec3(0.4, 0, 0), vec3(0, 0, 0.4), lamp_mat));
+    auto panel_light = std::make_shared<quad>(point3(-0.5, -0.5, 0), vec3(1, 0, 0), vec3(0, 1, 0), dim_mat);
+    mixed.add(std::make_shared<instance>(panel_light,
+        transform::translate(vec3(0, 0, -2)).then_after(transform::scale(vec3(2, 2, 2)))));
+    mixed.add(std::make_shared<sphere>(point3(1.5, 0, 0), 0.3, mat));  // Not emissive: power unknown
+    aabb mixed_bounds(point3(-2, -2, -3), point3(2, 2, 2));
+    mixed.uniform_fraction = 0;  // Pure power first
+    mixed.build(mixed_bounds);
+
+    double lamp_power = pi * 0.16 * 50;
+    double panel_power = pi * 4 * 0.5;  // Area 1 scaled by 2^2
+    ok &= check("light power ratio lamp / scaled panel", mixed.probability(1) / mixed.probability(2),
+                lamp_power / panel_power, 1e-9);
+    ok &= check("unknown light power falls back to the mean",
+                mixed.probability(3) / (mixed.probability(0) + mixed.probability(1) + mixed.probability(2)),
+                1.0 / 3.0, 1e-9);
+
+    // With the default defensive share, p_k = (1 - a) P_k / sum P + a / n
+    std::vector<double> pure;
+    for (size_t k = 0; k < mixed.objects.size(); k++)
+        pure.push_back(mixed.probability(k));
+    mixed.uniform_fraction = 0.2;
+    mixed.build(mixed_bounds);
+    ok &= check("defensive share of the dimmest light", mixed.probability(2),
+                0.8 * pure[2] + 0.2 / mixed.objects.size(), 1e-12);
+
+    double probability_sum = 0;
+    for (size_t k = 0; k < mixed.objects.size(); k++)
+        probability_sum += mixed.probability(k);
+    ok &= check("light probabilities sum", probability_sum, 1.0, 1e-12);
+
+    std::vector<int> picks(mixed.objects.size(), 0);
+    const int pick_count = 1000000;
+    for (int i = 0; i < pick_count; i++)
+        picks[mixed.pick(random_double())]++;
+    for (size_t k = 0; k < picks.size(); k++)
+        ok &= check("light " + std::to_string(k) + " selection frequency", double(picks[k]) / pick_count,
+                    mixed.probability(k), 5 * std::sqrt(mixed.probability(k) / pick_count));  // 5 sigma
+
+    hittable_pdf to_mixed(mixed, origin);
+    ok &= check("power-weighted light list pdf integral", integral_defensive(to_mixed), 1.0, 0.02);
+    // Dim parts of the sky are rarely drawn and weigh 1 / pdf each, so this
+    // estimate is noisy (standard deviation about 0.09)
+    ok &= check("power-weighted light list sampling", cap_solid_angle(to_mixed, vec3(0, 1, 0), -1.0), 4 * pi, 0.4);
 
     vec3 normal(0, 0, 1);
     for (double roughness : {0.2, 0.6, 1.0}) {
