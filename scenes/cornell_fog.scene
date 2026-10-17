@@ -1,0 +1,40 @@
+# Light shafts: the Cornell box filled with haze, lit only by a bright panel
+# outside a window in the left wall. A cross-shaped frame splits the window
+# into four panes, so four beams cross the room down to the floor.
+
+image_width  300
+aspect_ratio 1
+samples_per_pixel 1024
+max_depth    50
+background   0 0 0
+tonemap      aces
+
+camera lookfrom 278 278 -800  lookat 278 278 0  vup 0 1 0  vfov 40
+
+material red   lambertian 0.65 0.05 0.05
+material white lambertian 0.73 0.73 0.73
+material green lambertian 0.12 0.45 0.15
+material sun   emissive 200 180 150
+material haze  volume 0.9 0.9 0.9 g 0.4   # slightly forward scattering
+
+# Left wall (x = 555) with a window, y 260..460, z 140..420
+quad 555 0 0      0 260 0    0 0 555   green   # below the window
+quad 555 460 0    0 95 0     0 0 555   green   # above
+quad 555 260 0    0 200 0    0 0 140   green   # front of the window
+quad 555 260 420  0 200 0    0 0 135   green   # behind it
+box  545 350 140  565 370 420  green           # window frame: horizontal bar
+box  545 260 270  565 460 290  green           # vertical bar
+
+quad 0 0 0      0 555 0    0 0 555   red     # right wall
+quad 0 0 0      555 0 0    0 0 555   white   # floor
+quad 555 555 555  -555 0 0  0 0 -555 white   # ceiling
+quad 0 0 555    555 0 0    0 555 0   white   # back wall
+
+box 0 0 0  165 330 165  white  rotate_y 15   translate 265 0 295
+box 0 0 0  165 165 165  white  rotate_y -18  translate 130 0 65
+
+# The "sun": high up outside the window, facing into the room (-x)
+quad 1100 750 180  0 0 200  0 250 0  sun
+
+# Haze filling the room (kept just inside the walls)
+medium 0.005  box 1 1 1  554 554 554  haze
