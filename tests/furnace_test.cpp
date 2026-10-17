@@ -19,17 +19,26 @@
 
 // Renders the sphere in the furnace; returns the mean pixel value and the
 // largest deviation of any pixel channel from 1.
-static void render_furnace(std::shared_ptr<material> mat, double& mean, double& worst) {
+//
+// With use_environment, the white background is a constant environment map in
+// the lights, so the sphere is lit through next event estimation + MIS as well.
+static void render_furnace(std::shared_ptr<material> mat, double& mean, double& worst,
+                           bool use_environment = false) {
     hittable_list world, lights;
     world.add(std::make_shared<sphere>(point3(0, 0, -1), 0.5, mat));
 
     camera cam;
     cam.image_width = 32;
     cam.aspect_ratio = 1;
-    cam.samples_per_pixel = 64;
+    cam.samples_per_pixel = use_environment ? 256 : 64;  // Light sampling adds noise
     cam.max_depth = 100;
     cam.use_sky = false;
     cam.background = color(1, 1, 1);
+    if (use_environment) {
+        cam.environment = std::make_shared<environment_light>(
+            16, 8, std::vector<color>(16 * 8, color(1, 1, 1)));
+        lights.add(cam.environment);
+    }
 
     auto pixels = cam.render(world, lights);
 
@@ -45,9 +54,10 @@ static void render_furnace(std::shared_ptr<material> mat, double& mean, double& 
 }
 
 // Energy conserving: the sphere must vanish.
-static bool furnace(const std::string& name, std::shared_ptr<material> mat, double tolerance) {
+static bool furnace(const std::string& name, std::shared_ptr<material> mat, double tolerance,
+                    bool use_environment = false) {
     double mean, worst;
-    render_furnace(mat, mean, worst);
+    render_furnace(mat, mean, worst, use_environment);
     bool ok = std::fabs(mean - 1) < tolerance && worst < 4 * tolerance;
     std::cout << (ok ? "PASS " : "FAIL ") << name << ": mean " << mean
               << ", worst pixel off by " << worst << '\n';
@@ -71,6 +81,9 @@ int main() {
     ok &= furnace("white lambertian", std::make_shared<lambertian>(color(1, 1, 1)), 1e-6);
     ok &= furnace("perfect mirror", std::make_shared<metal>(color(1, 1, 1), 0.0), 1e-6);
     ok &= furnace("clear glass", std::make_shared<dielectric>(1.5), 0.02);
+    // Light sampling makes this one noisy (not exact like pure BSDF sampling
+    // of a constant sky), so the tolerance is looser
+    ok &= furnace("white lambertian, environment map", std::make_shared<lambertian>(color(1, 1, 1)), 0.02, true);
 
     auto white = std::make_shared<solid_color>(color(1, 1, 1));
     for (double roughness : {0.1, 0.5, 1.0}) {
