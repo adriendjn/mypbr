@@ -1,0 +1,32 @@
+# Colored glass (Beer-Lambert absorption): every object is the same green
+# glass, which keeps 45% red, 80% green and 60% blue after 1 unit inside.
+# Thick parts are dark and saturated, thin parts nearly clear:
+#   left to right: spheres of radius 0.2, 0.45 and 0.8, then a frosted
+#   (rough) sphere of radius 0.6 in the same glass
+#   back: a thin pane (0.04 thick) next to a thick block (1.2 thick)
+
+image_width  600
+aspect_ratio 3/2
+samples_per_pixel 256
+max_depth    48
+tonemap      aces
+
+camera lookfrom 0 3.2 8.5  lookat 0 0.6 0  vup 0 1 0  vfov 32
+
+texture  floor checker 0.5  0.3 0.3 0.32  0.75 0.75 0.75
+material floor lambertian texture floor
+material lamp  emissive 5 5 5
+
+material green dielectric 1.5 color 0.45 0.8 0.6 distance 1
+material frost dielectric 1.5 roughness 0.25 color 0.45 0.8 0.6 distance 1
+
+sphere 0 -1000 0  1000  floor
+quad -2 6 -1   4 0 0   0 0 3   lamp      # area light above, facing down
+
+sphere -2.9 0.2  0.9  0.2   green
+sphere -1.9 0.45 0.9  0.45  green
+sphere -0.2 0.8  0.9  0.8   green
+sphere  1.9 0.6  0.9  0.6   frost
+
+box -3.4 0 -1.6  -1.6 1.6 -1.56  green  rotate_y 30    # thin pane
+box  0.6 0 -2.2   2.6 1.2 -1.0   green  rotate_y -20   # thick block
