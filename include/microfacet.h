@@ -82,6 +82,14 @@ class ggx{
         // Samples a normal from the distribution of normals visible from wo
         // (Heitz 2018, "Sampling the GGX Distribution of Visible Normals").
         vec3 sample_visible(const vec3& wo) const {
+            double u1 = random_double();
+            double u2 = random_double();
+            return sample_visible(wo, u1, u2);
+        }
+
+        // The same warp driven by given uniform numbers u1, u2 in [0,1), for
+        // deterministic (stratified) sampling.
+        vec3 sample_visible(const vec3& wo, double u1, double u2) const {
             // Stretch the view direction to the hemisphere configuration
             vec3 vh = unit_vector(vec3(alpha * wo.x(), alpha * wo.y(), wo.z()));
 
@@ -90,8 +98,8 @@ class ggx{
             vec3 t2 = cross(vh, t1);
 
             // Uniform point on the disk, warped towards the visible half
-            double r = std::sqrt(random_double());
-            double phi = 2 * pi * random_double();
+            double r = std::sqrt(u1);
+            double phi = 2 * pi * u2;
             double p1 = r * std::cos(phi);
             double p2 = r * std::sin(phi);
             double s = 0.5 * (1 + vh.z());
@@ -139,6 +147,137 @@ class ggx_reflection_pdf : public pdf{
         vec3 wo;
         ggx dist;
 };
+
+// Multiple-scattering energy compensation (Kulla and Conty 2017, "Revisiting
+// Physically Based Shading at Imageworks").
+//
+// Single-scattering GGX drops the light that bounces more than once between
+// microfacets, so rough surfaces reflect less than they should. With F = 1,
+// the lobe's directional albedo E(mu) = integral of D G / (4 cos_o) over the
+// hemisphere is what it keeps for a view at cos_o = mu; Kulla-Conty add a
+// near-diffuse lobe that returns the missing 1 - E(mu):
+//
+//   f_ms(o, i) = (1 - E(mu_o)) (1 - E(mu_i)) / (pi (1 - E_avg)),
+//   E_avg = 2 * integral of E(mu) mu dmu over [0,1].
+//
+// Integrating f_ms cos_i over the hemisphere gives exactly 1 - E(mu_o), and
+// f_ms is symmetric in o and i, so it stays reciprocal.
+
+// Tabulated E(mu, alpha) and E_avg(alpha) of the F = 1 single-scatter GGX
+// lobe, built once on first use. The rows are spaced evenly in roughness
+// (sqrt(alpha)), where E changes most evenly, and the columns in mu.
+class ggx_albedo_table{
+    public:
+        static constexpr int size = 32;
+
+        // Built on first call; C++11 makes this initialization thread-safe.
+        static const ggx_albedo_table& get() {
+            static const ggx_albedo_table table;
+            return table;
+        }
+
+        // Bilinear in (roughness, mu).
+        double E(double cos_theta, double alpha) const {
+            double x = std::clamp(cos_theta, 0.0, 1.0) * (size - 1);
+            double y = std::clamp(std::sqrt(alpha), 0.0, 1.0) * (size - 1);
+            int i = std::min(int(x), size - 2);
+            int j = std::min(int(y), size - 2);
+            double tx = x - i, ty = y - j;
+            double lo = (1 - tx) * e[j][i] + tx * e[j][i + 1];
+            double hi = (1 - tx) * e[j + 1][i] + tx * e[j + 1][i + 1];
+            return (1 - ty) * lo + ty * hi;
+        }
+
+        // Linear in roughness.
+        double E_avg(double alpha) const {
+            double y = std::clamp(std::sqrt(alpha), 0.0, 1.0) * (size - 1);
+            int j = std::min(int(y), size - 2);
+            double ty = y - j;
+            return (1 - ty) * e_avg[j] + ty * e_avg[j + 1];
+        }
+
+    private:
+        double e[size][size];  // [roughness][mu]
+        double e_avg[size];
+
+        ggx_albedo_table() {
+            // Stratified grid of VNDF samples: a fixed, deterministic sequence
+            // (the thread_local random_double() would make every run differ)
+            const int strata = 64;
+            for (int j = 0; j < size; j++) {
+                double roughness = double(j) / (size - 1);
+                ggx dist(roughness_to_alpha(roughness));
+                for (int i = 0; i < size; i++) {
+                    // mu = 0 is a grazing view no sample can see; use a nearby angle
+                    double mu = std::fmax(double(i) / (size - 1), 1e-3);
+                    vec3 wo(std::sqrt(1 - mu * mu), 0, mu);
+
+                    // Sampling visible normals, f cos_i / pdf = (D G / (4 cos_o))
+                    // / (G1(wo) D / (4 cos_o)) = G / G1(wo), with F = 1
+                    double sum = 0;
+                    for (int a = 0; a < strata; a++) {
+                        for (int b = 0; b < strata; b++) {
+                            vec3 h = dist.sample_visible(wo, (a + 0.5) / strata, (b + 0.5) / strata);
+                            vec3 wi = -wo + 2 * dot(wo, h) * h;
+                            if (wi.z() > 0)
+                                sum += dist.G(wo, wi) / dist.G1(wo);
+                        }
+                    }
+                    e[j][i] = std::fmin(sum / (strata * strata), 1.0);
+                }
+
+                // E_avg = 2 * integral of E(mu) mu dmu, taken exactly over the
+                // piecewise linear E that E() interpolates, so the compensation
+                // lobe returns 1 - E(mu_o) as E() itself reports it. On [a, b]
+                // with E linear: integral of E mu = (b - a) (E_a (2a + b) + E_b (a + 2b)) / 6.
+                double integral = 0;
+                double h = 1.0 / (size - 1);
+                for (int i = 0; i + 1 < size; i++) {
+                    double a = i * h, b = (i + 1) * h;
+                    integral += h * (e[j][i] * (2 * a + b) + e[j][i + 1] * (a + 2 * b)) / 6;
+                }
+                e_avg[j] = std::fmin(2 * integral, 1.0);
+            }
+        }
+};
+
+// f_ms(o, i) cos_i, the compensation lobe for F = 1 (see above).
+inline double ggx_ms_eval(double cos_o, double cos_i, double alpha) {
+    if (cos_o <= 0 || cos_i <= 0)
+        return 0;
+    const auto& table = ggx_albedo_table::get();
+    double missing_avg = 1 - table.E_avg(alpha);
+    if (missing_avg < 1e-6)
+        return 0;  // Smooth enough that single scattering keeps all the energy
+    return (1 - table.E(cos_o, alpha)) * (1 - table.E(cos_i, alpha)) / (pi * missing_avg) * cos_i;
+}
+
+// Energy the compensation lobe reflects for a view at cos_o with F = 1: 1 - E(cos_o).
+inline double ggx_ms_albedo(double cos_o, double alpha) {
+    if (cos_o <= 0 || 1 - ggx_albedo_table::get().E_avg(alpha) < 1e-6)
+        return 0;
+    return 1 - ggx_albedo_table::get().E(cos_o, alpha);
+}
+
+// Color of the multiply scattered light for a Schlick conductor. Each bounce
+// between microfacets is tinted by the hemispherical average Fresnel F_avg,
+// which for Schlick is f0 + (1 - f0) * 2 * integral of (1 - mu)^5 mu dmu
+// = f0 + (1 - f0) / 21. Summing the bounces as a geometric series gives
+// F_ms = F_avg^2 E_avg / (1 - F_avg (1 - E_avg)), which is 1 for f0 = 1.
+inline color ggx_ms_fresnel(const color& f0, double alpha) {
+    double e_avg = ggx_albedo_table::get().E_avg(alpha);
+    color f_avg = f0 + (color(1, 1, 1) - f0) / 21;
+    color f_ms;
+    for (int k = 0; k < 3; k++)
+        f_ms[k] = f_avg[k] * f_avg[k] * e_avg / (1 - f_avg[k] * (1 - e_avg));
+    return f_ms;
+}
+
+// The tinted compensation lobe, F_ms f_ms(o, i) cos_i, to add to a GGX
+// conductor's D G F / (4 cos_o).
+inline color ggx_ms_term(double cos_o, double cos_i, double alpha, const color& f0) {
+    return ggx_ms_fresnel(f0, alpha) * ggx_ms_eval(cos_o, cos_i, alpha);
+}
 
 // Rough dielectric (Walter et al. 2007, in the form used by pbrt-v4).
 // The frame's +z is the normal on wo's side, and eta is the index of
