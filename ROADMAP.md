@@ -1,6 +1,8 @@
 # mypbr roadmap
 
-Where the renderer is today: Ray Tracing in One Weekend through chapter 6. Spheres in a `hittable_list`, an `interval` type, a `camera` class, one ray per pixel, normal shading over a sky gradient, PPM to stdout, a CMake Release build, and a text scene loader (`image_width`, `aspect_ratio`, `sphere`).
+Where the renderer is today: milestones 1 to 12 are done (renders in `renders/NN-*.png`). It is a multithreaded CPU path tracer with NEE + MIS, GGX microfacets with energy compensation, a SAH BVH, OBJ/MTL meshes, HDRI lighting, fog, normal maps and an à-trous denoiser. `CLAUDE.md` describes the code.
+
+The plan started from Ray Tracing in One Weekend chapter 6 (spheres, a `camera` class, normal shading, PPM to stdout).
 
 Each milestone below ends with a render you can look at. Do them in order; every one builds on the previous.
 
@@ -115,13 +117,29 @@ Do this when renders start taking minutes, probably around milestone 6.
 
 **Done when:** the Stanford bunny renders in glass inside the Cornell box.
 
-## 11. Beyond (pick what interests you)
+## 11. Beyond (done 2026-10-17)
 
-- Environment lighting from an HDRI with importance sampling.
-- Participating media: constant-density fog, then heterogeneous volumes.
+- ✓ Environment lighting from an HDRI with importance sampling (2D CDF over the equirectangular map). PR #2.
+- ✓ MTL materials and textures for Sponza, with alpha masks. PR #3.
+- ✓ Participating media: constant-density fog with a Henyey-Greenstein phase function. PR #4.
+- ✓ A denoiser: our own albedo/normal guided à-trous filter (`--denoise`, `--noisy`) instead of Open Image Denoise. PR #5.
+
+## 12. Materials (done 2026-10-17, PR #6)
+
+- ✓ Tangent-space normal maps (`normal_mapped`, MTL `norm`/`map_Bump`), textured roughness and metallic on `principled`.
+- ✓ Colored glass with Beer-Lambert absorption.
+- ✓ Kulla-Conty multiple-scattering compensation for rough GGX metal and principled specular.
+- ✓ Light selection in proportion to power (20% kept uniform).
+
+Known gaps: grey-scale bump (height) maps are skipped, rough glass is not energy-compensated, the denoiser's normal guide ignores normal maps.
+
+## Next ideas
+
+- **Validate against a reference renderer:** render the same scenes in Mitsuba or pbrt (e.g. by exporting a subset of their scene format) and compare images, BSDF by BSDF.
+- Heterogeneous volumes (grid densities, delta tracking).
 - Spectral rendering (wavelengths instead of RGB) for dispersion in glass.
-- Bidirectional path tracing or a denoiser (Intel Open Image Denoise) for faster convergence.
-- Switch the scene format to something standard (e.g. a subset of the Mitsuba or pbrt format) to compare your images against reference renderers.
+- Bidirectional path tracing for caustics and hard-to-reach lights.
+- Close the known gaps above.
 
 ---
 

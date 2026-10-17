@@ -4,6 +4,15 @@ A CPU path tracer in C++17, grown from *Ray Tracing in One Weekend* into a
 physically based renderer (NEE + MIS, GGX microfacets, BVH, meshes, HDR output).
 Roadmap and history: `ROADMAP.md`. Milestone renders: `renders/NN-name.png`.
 
+## Status
+
+Milestones 1-10 of `ROADMAP.md` are done, plus 11 (HDRI environment, MTL textures and
+alpha masks, fog, denoiser) and 12 (normal maps, textured roughness/metallic, colored
+glass, Kulla-Conty compensation, power-based light selection). Known gaps: grey-scale
+bump/height maps are skipped with a warning, rough glass is not energy-compensated,
+the denoiser's normal guide ignores normal maps. Next idea: validate the BSDFs against
+Mitsuba or pbrt renders of the same scenes.
+
 ## Build, test, run
 
 ```sh
@@ -75,6 +84,12 @@ variance; `main` runs `denoiser::run` on the `frame` before every save.
   layer add it back with the Kulla-Conty lobe (`ggx_ms_term`, sampled by a cosine pdf in a
   mixture), so white rough metals pass the furnace test; rough glass is not compensated and
   still only checks "never gains". The E(mu, alpha) table is built on first use (~0.3 s).
+- Shadow rays (`sample_light`) use a **normalized** direction so the 0.001 self-hit offset is a
+  distance; with the raw `to_light` vector it scaled with the distance to the light.
+- `pdf_test`'s full-sphere environment sampling check has a wide tolerance (0.4 on 4π) because
+  its estimate has σ ≈ 0.08; a tighter bound fails randomly, it does not signal a bug.
+- `map_Bump`/`bump`/`map_Disp`/`disp` in MTL are read as normal maps when the image has color
+  (Sponza's `*_ddn.tga`); grey-scale height maps are skipped.
 - Lights are one-sided (`diffuse_light` emits on the front face only) and must be in
   both `world` and `lights`; the scene loader does this for emissive objects.
   Transformed lights must be similarity transforms (sampling pdfs assume it).
