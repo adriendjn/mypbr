@@ -20,17 +20,26 @@
 
 // Renders the sphere in the furnace; returns the mean pixel value and the
 // largest deviation of any pixel channel from 1.
-static void render_furnace(std::shared_ptr<hittable> object, double& mean, double& worst) {
+//
+// With use_environment, the white background is a constant environment map in
+// the lights, so the sphere is lit through next event estimation + MIS as well.
+static void render_furnace(std::shared_ptr<hittable> object, double& mean, double& worst,
+                           bool use_environment = false) {
     hittable_list world, lights;
     world.add(object);
 
     camera cam;
     cam.image_width = 32;
     cam.aspect_ratio = 1;
-    cam.samples_per_pixel = 64;
+    cam.samples_per_pixel = use_environment ? 256 : 64;  // Light sampling adds noise
     cam.max_depth = 100;
     cam.use_sky = false;
     cam.background = color(1, 1, 1);
+    if (use_environment) {
+        cam.environment = std::make_shared<environment_light>(
+            16, 8, std::vector<color>(16 * 8, color(1, 1, 1)));
+        lights.add(cam.environment);
+    }
 
     auto pixels = cam.render(world, lights);
 
@@ -50,9 +59,10 @@ static std::shared_ptr<hittable> furnace_sphere(std::shared_ptr<material> mat) {
 }
 
 // Energy conserving: the object must vanish.
-static bool furnace(const std::string& name, std::shared_ptr<hittable> object, double tolerance) {
+static bool furnace(const std::string& name, std::shared_ptr<hittable> object, double tolerance,
+                    bool use_environment = false) {
     double mean, worst;
-    render_furnace(object, mean, worst);
+    render_furnace(object, mean, worst, use_environment);
     bool ok = std::fabs(mean - 1) < tolerance && worst < 4 * tolerance;
     std::cout << (ok ? "PASS " : "FAIL ") << name << ": mean " << mean
               << ", worst pixel off by " << worst << '\n';
@@ -76,6 +86,10 @@ int main() {
     ok &= furnace("white lambertian", furnace_sphere(std::make_shared<lambertian>(color(1, 1, 1))), 1e-6);
     ok &= furnace("perfect mirror", furnace_sphere(std::make_shared<metal>(color(1, 1, 1), 0.0)), 1e-6);
     ok &= furnace("clear glass", furnace_sphere(std::make_shared<dielectric>(1.5)), 0.02);
+    // Light sampling makes this one noisy (not exact like pure BSDF sampling
+    // of a constant sky), so the tolerance is looser
+    ok &= furnace("white lambertian, environment map",
+                  furnace_sphere(std::make_shared<lambertian>(color(1, 1, 1))), 0.02, true);
 
     // A non-absorbing medium only redirects light, so it must vanish too. Paths
     // scatter many times inside it, so Russian roulette adds more per-pixel noise

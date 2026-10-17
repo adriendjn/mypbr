@@ -3,6 +3,7 @@
 
 #include "hittable.h"
 #include "color3.h"
+#include "environment.h"
 #include "hittable_list.h"
 #include "material.h"
 
@@ -27,6 +28,8 @@ class camera{
 
         bool   use_sky    = true;             // Sky gradient behind the scene, or...
         color  background = color(0, 0, 0);  // ...a constant background color
+        std::shared_ptr<environment_light> environment;  // HDR sky; overrides both, and
+                                                         // must also be in the lights
 
         double defocus_angle = 0;  // Variation angle of rays through each pixel
         double focus_dist    = 10; // Distance from camera lookfrom point to plane of perfect focus
@@ -243,7 +246,15 @@ class camera{
                 hit_record rec;
                 // Start at 0.001 so a bounced ray doesn't re-hit its own surface (shadow acne)
                 if (!world.hit(r, interval(0.001, infinity), rec)) {
-                    radiance += beta * background_color(r);
+                    // The sky is a light too: weighted against light sampling
+                    // like emission. A constant background is not in lights,
+                    // so its light pdf is 0 and the weight comes out as 1.
+                    if (specular || lights.empty()) {
+                        radiance += beta * background_color(r);
+                    } else {
+                        auto light_pdf = lights.pdf_value(prev_point, r.direction());
+                        radiance += beta * background_color(r) * power_heuristic(scatter_pdf, light_pdf);
+                    }
                     break;
                 }
 
@@ -313,21 +324,28 @@ class camera{
             if (f.x() <= 0 && f.y() <= 0 && f.z() <= 0)
                 return color(0, 0, 0);
 
-            // The shadow ray sees the light only if nothing else is closer. Its
+            // The shadow ray sees the light only if nothing else is closer.
+            // Whatever it reaches counts, whichever light was sampled: light_pdf
+            // is the density of the whole list, so this stays unbiased. Its
             // direction is normalized so the 0.001 offset is a distance: to_light
             // reaches the light, and would make it skip a whole unit of the scene.
             ray shadow(rec.p, unit_vector(to_light));
             hit_record light_rec;
-            if (!world.hit(shadow, interval(0.001, infinity), light_rec))
+            color emission;
+            if (world.hit(shadow, interval(0.001, infinity), light_rec))
+                emission = light_rec.mat->emitted(shadow, light_rec);
+            else if (environment)
+                emission = environment->radiance(to_light);  // Reached the sky
+            else
                 return color(0, 0, 0);
-
-            color emission = light_rec.mat->emitted(shadow, light_rec);
             auto weight = last_bounce ? 1.0 : power_heuristic(light_pdf, bsdf_pdf.value(to_light));
             return f * emission * (weight / light_pdf);
         }
 
         // Radiance arriving from a direction that hits nothing.
         color background_color(const ray& r) const {
+            if (environment)
+                return environment->radiance(r.direction());
             if (!use_sky)
                 return background;
             vec3 unit_direction = unit_vector(r.direction());

@@ -1,6 +1,7 @@
 // Checks that each pdf integrates to one over the sphere of directions and
 // that its value() matches the density of the directions generate() draws.
 
+#include <environment.h>
 #include <hittable_list.h>
 #include <material.h>
 #include <microfacet.h>
@@ -114,8 +115,24 @@ int main() {
         auto name = "Henyey-Greenstein g " + std::to_string(g).substr(0, g < 0 ? 4 : 3);
         henyey_greenstein_pdf hg(forward, g);
         ok &= check(name + " integral", integral_defensive(hg), 1.0, 0.02);
-        ok &= check(name + " sampling", cap_solid_angle(hg, forward, 0.0), 2 * pi, 0.05);
+        // Check the hemisphere the lobe favors: rarely sampled directions have
+        // a tiny pdf, and their 1/pdf terms would make the estimate noisy
+        vec3 lobe = g < 0 ? -forward : forward;
+        ok &= check(name + " sampling", cap_solid_angle(hg, lobe, 0.0), 2 * pi, 0.05);
     }
+
+    // A dim sky with a small, very bright sun: the sampler should send most
+    // directions at the sun, and value() must still integrate to one.
+    const int sky_w = 64, sky_h = 32;
+    std::vector<color> sky_pixels(sky_w * sky_h, color(0.2, 0.3, 0.5));
+    for (int j = 5; j < 7; j++)
+        for (int i = 40; i < 43; i++)
+            sky_pixels[j * sky_w + i] = color(5000, 4000, 3000);
+    environment_light sky(sky_w, sky_h, sky_pixels, 1.0, 30.0);
+    hittable_pdf to_sky(sky, origin);
+    ok &= check("environment pdf integral", integral_defensive(to_sky), 1.0, 0.02);
+    ok &= check("environment sampling", cap_solid_angle(to_sky, vec3(0, 1, 0), -1.0), 4 * pi, 0.15);
+    ok &= check("environment upper hemisphere", cap_solid_angle(to_sky, vec3(0, 1, 0), 0.0), 2 * pi, 0.15);
 
     vec3 normal(0, 0, 1);
     for (double roughness : {0.2, 0.6, 1.0}) {

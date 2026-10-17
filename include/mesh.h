@@ -4,6 +4,7 @@
 #include "bvh.h"
 #include "hittable.h"
 #include "material.h"
+#include "texture.h"
 
 #include <algorithm>
 #include <memory>
@@ -19,10 +20,16 @@ class mesh_data{
 
 // One triangle of a mesh, by vertex indices into mesh_data. Normal and uv
 // indices are -1 when the file doesn't provide them.
+//
+// An optional alpha mask cuts holes in the surface (leaves, chains, fences):
+// where its coverage is a, a ray hits with probability a and otherwise passes
+// through. For a mask of 0s and 1s that is a plain cutout; in between, the
+// average over many rays gives the partial coverage without sorting layers.
 class triangle : public hittable{
     public:
-        triangle(const mesh_data* data, const int v[3], const int n[3], const int t[3], const material* mat)
-            : data(data), mat(mat)
+        triangle(const mesh_data* data, const int v[3], const int n[3], const int t[3], const material* mat,
+                 const image_texture* alpha_mask = nullptr)
+            : data(data), mat(mat), alpha_mask(alpha_mask)
         {
             for (int k = 0; k < 3; k++) {
                 vi[k] = v[k];
@@ -63,7 +70,23 @@ class triangle : public hittable{
                 return false;
 
             double b0 = 1 - b1 - b2;
+            double u = b1, v = b2;
+            if (ti[0] >= 0 && ti[1] >= 0 && ti[2] >= 0) {
+                vec3 uv = b0 * data->uvs[ti[0]] + b1 * data->uvs[ti[1]] + b2 * data->uvs[ti[2]];
+                u = uv.x();
+                v = uv.y();
+            }
+
+            // Checked before rec is touched: on a miss it must keep the closest hit so far
+            if (alpha_mask) {
+                double coverage = alpha_mask->alpha_value(u, v);
+                if (coverage < 1 && random_double() >= coverage)
+                    return false;
+            }
+
             rec.t = t;
+            rec.u = u;
+            rec.v = v;
             rec.p = r.at(t);
             rec.mat = mat;
 
@@ -78,15 +101,6 @@ class triangle : public hittable{
                     shading = unit_vector(shading);
                     rec.normal = dot(shading, rec.normal) < 0 ? -shading : shading;
                 }
-            }
-
-            if (ti[0] >= 0 && ti[1] >= 0 && ti[2] >= 0) {
-                vec3 uv = b0 * data->uvs[ti[0]] + b1 * data->uvs[ti[1]] + b2 * data->uvs[ti[2]];
-                rec.u = uv.x();
-                rec.v = uv.y();
-            } else {
-                rec.u = b1;
-                rec.v = b2;
             }
             return true;
         }
@@ -123,6 +137,7 @@ class triangle : public hittable{
         const mesh_data* data;
         int vi[3], ni[3], ti[3];
         const material* mat;
+        const image_texture* alpha_mask;  // Owned by the mesh; null when opaque
         aabb bbox;
         double area;
 };
@@ -132,8 +147,8 @@ class triangle : public hittable{
 class mesh : public hittable{
     public:
         mesh(std::shared_ptr<mesh_data> data, std::vector<std::shared_ptr<hittable>> triangles,
-             std::shared_ptr<material> mat)
-            : data(data), triangles(triangles), tree(triangles), mat(mat)
+             std::shared_ptr<material> mat, std::shared_ptr<image_texture> alpha_mask = nullptr)
+            : data(data), triangles(triangles), tree(triangles), mat(mat), alpha_mask(alpha_mask)
         {
             double total = 0;
             for (const auto& tri : triangles) {
@@ -177,6 +192,7 @@ class mesh : public hittable{
         std::vector<std::shared_ptr<hittable>> triangles;
         bvh tree;
         std::shared_ptr<material> mat;  // Keeps the triangles' material alive
+        std::shared_ptr<image_texture> alpha_mask;  // And their alpha mask
         std::vector<double> area_cdf;
         double total_area;
 };

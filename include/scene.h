@@ -25,7 +25,7 @@
 class scene{
     public:
         hittable_list    world;
-        hittable_list    lights;   // Emissive objects, also part of world
+        hittable_list    lights;   // Emissive objects (also part of world) and the environment
         camera           cam;
         display_settings display;  // How radiance becomes PNG/PPM pixels
 };
@@ -67,6 +67,9 @@ class scene{
 //                                             # (0 = isotropic, > 0 = forward)
 //
 //   background   0 0 0         # constant background instead of the sky gradient
+//   environment  textures/sky.hdr  [intensity 1] [rotate 0]
+//                              # equirectangular HDR sky that also lights the scene
+//                              # (importance sampled); rotate turns it about y, in degrees
 //   exposure     0             # stops; display images are scaled by 2^exposure
 //   tonemap      aces          # none (clamp, the default), reinhard or aces
 //
@@ -97,7 +100,9 @@ class scene{
 //
 // Transformed objects are instances sharing the original geometry; a mesh
 // file used several times with the same material is loaded once. In a mesh,
-// "usemtl <name>" selects the scene material of that name when there is one.
+// "usemtl <name>" selects the scene material of that name when there is one,
+// else the one from the OBJ's mtllib file (colors, textures, alpha masks;
+// see load_mtl in obj_loader.h), else the mesh line's material.
 //
 // Materials must be defined before they are used. A sphere without a
 // material name gets a default grey Lambertian.
@@ -322,6 +327,27 @@ inline bool load_scene(const std::string& path, scene& result) {
                 return fail(line_number, "expected 'background <r> <g> <b>'");
             cam.use_sky = false;
             cam.background = color(r, g, b);
+        } else if (keyword == "environment") {
+            std::string file, key;
+            double intensity = 1, rotation = 0;
+            const char* usage = "expected 'environment <file.hdr> [intensity <s>] [rotate <degrees>]'";
+            if (!(in >> file))
+                return fail(line_number, usage);
+            while (in >> key) {
+                bool ok = (key == "intensity" && in >> intensity && intensity >= 0)
+                       || (key == "rotate" && in >> rotation);
+                if (!ok)
+                    return fail(line_number, usage);
+            }
+            if (file[0] != '/')
+                file = scene_dir + file;
+            auto sky = std::make_shared<environment_light>(file, intensity, rotation);
+            if (!sky->loaded())
+                return fail(line_number, "cannot load environment map '" + file + "'");
+            if (cam.environment)
+                return fail(line_number, "only one environment is allowed");
+            cam.environment = sky;
+            lights.add(sky);  // Sampled by next event estimation; never hit, so not in world
         } else if (keyword == "exposure") {
             if (!(in >> result.display.exposure))
                 return fail(line_number, "expected 'exposure <stops>'");
