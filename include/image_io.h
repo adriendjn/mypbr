@@ -71,20 +71,26 @@ inline bool is_supported_image(const std::string& path) {
 }
 
 // Writes the image to path, choosing the format from the extension. .png and
-// .ppm are display images (exposure + tonemap); .hdr and .pfm keep the raw
-// radiance. An empty path writes PPM to stdout.
+// .ppm are display images (bloom, vignette, exposure, tonemap); .hdr and .pfm
+// keep the raw radiance. An empty path writes PPM to stdout.
 inline bool write_image(const std::string& path, int width, int height, const std::vector<color>& pixels,
                         const display_settings& display) {
+    bool shown = path.empty() || ends_with(path, ".png") || ends_with(path, ".ppm");
+    std::vector<color> post;
+    if (shown && display.post.active())
+        post = postprocess(pixels, width, height, display.post);
+    const std::vector<color>& display_pixels = post.empty() ? pixels : post;
+
     bool ok = false;
     if (path.empty()) {
-        write_ppm(std::cout, width, height, pixels, display);
+        write_ppm(std::cout, width, height, display_pixels, display);
         return true;
     } else if (ends_with(path, ".png")) {
-        ok = write_png(path, width, height, pixels, display);
+        ok = write_png(path, width, height, display_pixels, display);
     } else if (ends_with(path, ".ppm")) {
         std::ofstream out(path);
         if (out)
-            write_ppm(out, width, height, pixels, display);
+            write_ppm(out, width, height, display_pixels, display);
         ok = bool(out);
     } else if (ends_with(path, ".hdr")) {
         ok = write_hdr(path, width, height, pixels);

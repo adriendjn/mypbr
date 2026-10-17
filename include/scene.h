@@ -48,6 +48,7 @@ class scene{
 //
 //   camera lookfrom 13 2 3  lookat 0 0 0  vup 0 1 0  vfov 20
 //   aperture     0.6           # defocus angle in degrees (0 = pinhole)
+//   camera blades 6 blade_rotation 15   # polygonal aperture: hexagonal bokeh
 //   focus        10            # distance to the plane of perfect focus
 //
 // The camera line takes any of its settings, in any order; aperture and
@@ -106,6 +107,10 @@ class scene{
 //                              # lambertian); "ground off" removes it
 //   light_selection power      # how next event estimation picks a light: power (the
 //                              # default, in proportion to emitted power) or uniform
+//   bloom 0.3 [threshold 1] [radius 0.04]   # glow around radiance above the
+//                              # threshold, reaching radius x image width; strength
+//                              # 0 is off (display images only, like the next ones)
+//   vignette     0.3           # darker corners (0 = off)
 //   exposure     0             # stops; display images are scaled by 2^exposure
 //   tonemap      aces          # none (clamp, the default), reinhard or aces
 //
@@ -405,6 +410,8 @@ inline bool load_scene(const std::string& path, scene& result) {
                 else if (key == "vfov")     ok = bool(in >> cam.vfov) && cam.vfov > 0 && cam.vfov < 180;
                 else if (key == "aperture") ok = bool(in >> cam.defocus_angle) && cam.defocus_angle >= 0;
                 else if (key == "focus")    ok = bool(in >> cam.focus_dist) && cam.focus_dist > 0;
+                else if (key == "blades")   ok = bool(in >> cam.blades) && (cam.blades == 0 || cam.blades >= 3);
+                else if (key == "blade_rotation") ok = bool(in >> cam.blade_rotation);
                 else return fail(line_number, "unknown camera setting '" + key + "'");
                 if (!ok)
                     return fail(line_number, "bad value for camera setting '" + key + "'");
@@ -502,6 +509,21 @@ inline bool load_scene(const std::string& path, scene& result) {
                     ground_material = it->second;
                 }
             }
+        } else if (keyword == "bloom") {
+            auto& post = result.display.post;
+            const char* usage = "expected 'bloom <strength> [threshold <radiance>] [radius <fraction of width>]'";
+            std::string key;
+            if (!(in >> post.bloom) || post.bloom < 0)
+                return fail(line_number, usage);
+            while (in >> key) {
+                bool ok = (key == "threshold" && in >> post.bloom_threshold && post.bloom_threshold >= 0)
+                       || (key == "radius" && in >> post.bloom_radius && post.bloom_radius > 0);
+                if (!ok)
+                    return fail(line_number, usage);
+            }
+        } else if (keyword == "vignette") {
+            if (!(in >> result.display.post.vignette) || result.display.post.vignette < 0)
+                return fail(line_number, "expected 'vignette <strength>'");
         } else if (keyword == "exposure") {
             if (!(in >> result.display.exposure))
                 return fail(line_number, "expected 'exposure <stops>'");

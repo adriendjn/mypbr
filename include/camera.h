@@ -37,6 +37,8 @@ class camera{
 
         double defocus_angle = 0;  // Variation angle of rays through each pixel
         double focus_dist    = 10; // Distance from camera lookfrom point to plane of perfect focus
+        int    blades        = 0;  // Aperture shape: a regular polygon of this many sides (0 = round)
+        double blade_rotation = 0; // Turn of that polygon, in degrees
 
         int    threads = 0;  // Worker threads; 0 uses every hardware thread
 
@@ -296,10 +298,29 @@ class camera{
             return vec3(px, py, 0);
         }
 
-        // Returns a random point in the camera defocus disk.
+        // Returns a random point in the camera defocus disk, or in the regular
+        // polygon inscribed in it when the aperture has blades. Out-of-focus
+        // highlights take the aperture's shape (bokeh), since each is the
+        // aperture seen through the lens.
         point3 defocus_disk_sample() const {
-            auto p = random_in_unit_disk();
+            vec3 p = blades >= 3 ? random_in_polygon() : random_in_unit_disk();
             return center + (p[0] * defocus_disk_u) + (p[1] * defocus_disk_v);
+        }
+
+        // Uniform in a regular polygon with vertices on the unit circle: the
+        // polygon is blades equal triangles around the center, so pick one,
+        // then a uniform point in it (folding the unit square onto the
+        // triangle keeps the density uniform).
+        vec3 random_in_polygon() const {
+            int k = std::min(int(random_double() * blades), blades - 1);
+            double a0 = degrees_to_radians(blade_rotation) + 2 * pi * k / blades;
+            double a1 = a0 + 2 * pi / blades;
+            double s = random_double(), t = random_double();
+            if (s + t > 1) {
+                s = 1 - s;
+                t = 1 - t;
+            }
+            return s * vec3(std::cos(a0), std::sin(a0), 0) + t * vec3(std::cos(a1), std::sin(a1), 0);
         }
 
         // Power heuristic (beta = 2) weight for a sample drawn from the strategy
