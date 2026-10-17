@@ -26,7 +26,7 @@ the only other translation unit (stb, compiled as a SYSTEM library).
 | `scene.h` | `scene` struct and `load_scene()`. **The scene file format is documented in the comment at the top.** |
 | `camera.h` | Camera setup, tiled multithreaded progressive render, and the integrator (`ray_color`, `sample_light`). |
 | `denoiser.h` | `frame` (radiance + albedo/normal/variance guides) and `denoiser`: firefly clamp, then SVGF-style edge-avoiding à-trous filter on radiance / albedo. |
-| `material.h` | `material` interface; `lambertian`, `metal`, `dielectric`, `principled`, `diffuse_light`. |
+| `material.h` | `material` interface; `lambertian`, `metal`, `dielectric` (optional Beer-Lambert tint), `principled` (metallic/roughness textures), `diffuse_light`, `normal_mapped` (wrapper that bends the shading normal). |
 | `microfacet.h` | GGX distribution + Smith G, Fresnel, VNDF reflection sampling, Kulla-Conty multiple-scattering compensation (`ggx_albedo_table`, `ggx_ms_term`), rough dielectric BSDF. |
 | `environment.h` | `environment_light`: equirectangular HDR sky, importance sampled with a 2D CDF; lives in `lights` and `camera::environment`. |
 | `medium.h` | `constant_medium` (homogeneous fog in a convex boundary, free-flight sampling in `hit`) and `phase_material` (Henyey-Greenstein). |
@@ -87,6 +87,11 @@ variance; `main` runs `denoiser::run` on the `frame` before every save.
   boundary, never the medium, or its density changes with the instance's scale.
 - The environment is in `lights` but never in `world`: rays that miss see it, and `sample_light` counts a
   shadow ray that reaches the sky. Its sampling density is per pixel (piecewise constant), its lookup bilinear.
+- Normal maps need `hit_record::dpdu`/`dpdv`: new geometry must set them, or the unperturbed normal is used.
+  Normal-map and roughness/metallic images must be loaded `linear` (no sRGB decode). `normal_mapped`
+  only wraps reflective materials (lambertian, metal, principled), not glass.
+- Glass absorption is applied in `ray_color` through `material::interior_transmittance` on back-face
+  hits (the segment ran inside); a segment that ends on something else inside the glass is not tinted.
 - `mesh::pdf_value` is linear in triangle count: fine for small emissive meshes only.
 - Light selection probabilities are computed once by `light_list::build()` at the end of `load_scene`;
   lights added later are picked uniformly until it is called again. A new emitter type needs `power()`.
