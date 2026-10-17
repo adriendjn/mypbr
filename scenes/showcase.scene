@@ -1,0 +1,88 @@
+# Showcase: most of what the renderer can do, in one still life.
+#   - HDRI sky (quarry, importance sampled) with a low sun behind on the left
+#   - a slatted fence that stripes the floor with sun and shadow
+#   - light haze over the set (constant-density medium) for depth
+#   - tinted glass Stanford bunny (Beer-Lambert absorption, 69k triangles, BVH)
+#   - rough gold (GGX + Kulla-Conty compensation), mirror, frosted glass,
+#     red principled plastic, image-textured globe
+#   - tiled floor and block with normal, roughness and metallic maps
+#   - a warm area light and a small blue glowing sphere (power-based light selection)
+# Needs the bunny: run tools/fetch_models.sh first. Meant to be rendered
+# with --denoise; 512 spp at 1080p took ~20 minutes on 4 cores.
+
+image_width  1920
+aspect_ratio 16/9
+samples_per_pixel 512
+max_depth    24
+tonemap      aces
+exposure     -0.5
+
+camera lookfrom 0.4 1.7 7.6  lookat 0 0.65 0  vup 0 1 0  vfov 34
+aperture     0.25
+focus        7.6
+
+environment ../textures/quarry_01_1k.hdr  rotate 80   # sun low at the back left
+
+texture earth   image ../textures/earthmap.jpg
+texture tiles_n image ../textures/tiles_normal.png linear
+texture tiles_r image ../textures/tiles_roughness.png linear
+texture tiles_m image ../textures/tiles_metallic.png linear
+
+material floor  principled color 0.55 0.5 0.45 roughness texture tiles_r normal_map tiles_n
+material tiled  principled color 0.65 0.12 0.08 metallic texture tiles_m roughness texture tiles_r normal_map tiles_n
+material wood   lambertian 0.35 0.22 0.13
+material globe  lambertian texture earth
+material gold   metal 1.0 0.78 0.34 0.45
+material mirror metal 0.95 0.95 0.95 0
+material frost  dielectric 1.5 roughness 0.25
+material paint  principled color 0.7 0.05 0.04 roughness 0.15
+material teal   dielectric 1.5 color 0.55 0.8 0.95 distance 1
+material key    emissive 30 22 14
+material orb    emissive 0.4 1.4 4
+material haze   volume 0.9 0.9 0.9 g 0.6   # forward scattering: shafts glow toward the sun
+
+# Floor: 4x4 quads of 4 units, so each tile of the 4x4 texture is 1 unit wide
+quad -8 0  9  4 0 0  0 0 -4  floor
+quad -4 0  9  4 0 0  0 0 -4  floor
+quad  0 0  9  4 0 0  0 0 -4  floor
+quad  4 0  9  4 0 0  0 0 -4  floor
+quad -8 0  5  4 0 0  0 0 -4  floor
+quad -4 0  5  4 0 0  0 0 -4  floor
+quad  0 0  5  4 0 0  0 0 -4  floor
+quad  4 0  5  4 0 0  0 0 -4  floor
+quad -8 0  1  4 0 0  0 0 -4  floor
+quad -4 0  1  4 0 0  0 0 -4  floor
+quad  0 0  1  4 0 0  0 0 -4  floor
+quad  4 0  1  4 0 0  0 0 -4  floor
+quad -8 0 -3  4 0 0  0 0 -4  floor
+quad -4 0 -3  4 0 0  0 0 -4  floor
+quad  0 0 -3  4 0 0  0 0 -4  floor
+quad  4 0 -3  4 0 0  0 0 -4  floor
+
+mesh ../models/external/stanford-bunny.obj smooth teal  translate 0.0168 -0.033 0.0015  scale 9  rotate_y 200  translate 0 0 -0.3
+sphere -1.75 0.6  0.2   0.6   gold
+sphere  3.1  0.55 -1.2  0.55  globe
+sphere  1.75 0.55 0.3   0.55  frost
+sphere -0.75 0.3  1.7   0.3   mirror
+sphere  0.95 0.32 1.75  0.32  paint
+sphere  2.65 0.15 1.5   0.15  orb
+box -0.5 0 -0.5  0.5 1 0.5  tiled  rotate_y -25  translate -3.05 0 -1.0
+
+# Slatted fence between the sun and the objects, perpendicular to the sunlight;
+# the sun is only 10 degrees up, so its shadows stretch across the floor
+box -0.08 0 -0.08  0.08 2.6 0.08  wood  translate -2.0 0 0  rotate_y 45  translate -4.6 0 -4.2
+box -0.08 0 -0.08  0.08 2.6 0.08  wood  translate -1.5 0 0  rotate_y 45  translate -4.6 0 -4.2
+box -0.08 0 -0.08  0.08 2.6 0.08  wood  translate -1.0 0 0  rotate_y 45  translate -4.6 0 -4.2
+box -0.08 0 -0.08  0.08 2.6 0.08  wood  translate -0.5 0 0  rotate_y 45  translate -4.6 0 -4.2
+box -0.08 0 -0.08  0.08 2.6 0.08  wood  translate  0.0 0 0  rotate_y 45  translate -4.6 0 -4.2
+box -0.08 0 -0.08  0.08 2.6 0.08  wood  translate  0.5 0 0  rotate_y 45  translate -4.6 0 -4.2
+box -0.08 0 -0.08  0.08 2.6 0.08  wood  translate  1.0 0 0  rotate_y 45  translate -4.6 0 -4.2
+box -0.08 0 -0.08  0.08 2.6 0.08  wood  translate  1.5 0 0  rotate_y 45  translate -4.6 0 -4.2
+box -0.08 0 -0.08  0.08 2.6 0.08  wood  translate  2.0 0 0  rotate_y 45  translate -4.6 0 -4.2
+box -2.2 2.6 -0.1  2.2 2.75 0.1   wood  rotate_y 45  translate -4.6 0 -4.2   # top rail
+
+# Warm key light above at the front right, facing down toward the objects
+quad 4 3 2  -1.5 0 0  0 0.7 -1  key
+
+# Light haze over the whole set (the camera stays outside it)
+medium 0.015  box -8 0 -7  8 4 7  haze
