@@ -33,8 +33,8 @@ the only other translation unit (stb, compiled as a SYSTEM library).
 | `sphere.h`, `quad.h` (+ `box()`), `mesh.h` (`triangle`, `mesh`) | Geometry. |
 | `bvh.h`, `aabb.h` | Binned-SAH BVH, flattened, iterative near-first traversal. Meshes own an inner BVH. |
 | `instance.h`, `transform.h` | Affine instancing: rays are moved into object space. |
-| `obj_loader.h` | Minimal OBJ reader (v/vn/vt/f, fan triangulation, `usemtl`). |
-| `texture.h` | `solid_color`, `checker_texture`, `image_texture` (8-bit decoded from sRGB to linear). |
+| `obj_loader.h` | Minimal OBJ reader (v/vn/vt/f, fan triangulation, `usemtl`) and MTL reader (`Kd`/`map_Kd`, `Ks`/`Ns` → principled, `Ke`, alpha masks). |
+| `texture.h` | `solid_color`, `checker_texture`, `image_texture` (8-bit kept as bytes, decoded from sRGB on lookup; clamp or repeat; alpha). |
 | `tonemap.h`, `image_io.h`, `color3.h` | Exposure + none/reinhard/aces, sRGB curve, PNG/PPM/HDR/PFM writers. |
 | `vec3.h`, `ray.h`, `interval.h`, `onb.h`, `rtweekend.h` | Math, `random_double()`, constants. |
 
@@ -77,4 +77,8 @@ sRGB; `.hdr`/`.pfm` keep raw linear radiance.
 - The environment is in `lights` but never in `world`: rays that miss see it, and `sample_light` counts a
   shadow ray that reaches the sky. Its sampling density is per pixel (piecewise constant), its lookup bilinear.
 - `mesh::pdf_value` is linear in triangle count: fine for small emissive meshes only.
-- Scene paths (textures, OBJ) are relative to the scene file, not the CWD.
+- Scene paths (textures, OBJ) are relative to the scene file, not the CWD; MTL and
+  its texture paths are relative to the OBJ.
+- Alpha-masked triangles call `random_double()` inside `hit()` (stochastic coverage);
+  `hit()` must not write `rec` before that test, or a rejected hit corrupts the BVH's
+  closest-so-far record.
