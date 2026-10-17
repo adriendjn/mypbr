@@ -1,6 +1,7 @@
 #ifndef SCENE_H
 #define SCENE_H
 
+#include "atmosphere.h"
 #include "camera.h"
 #include "hittable_list.h"
 #include "instance.h"
@@ -103,6 +104,11 @@ class scene{
 //                              # itself from the camera. "sun off" removes it
 //   sky uniform 0.5 0.6 0.8    # sky of constant radiance (importance sampled like an
 //                              # environment); "sky gradient" is the default sky
+//   sky atmosphere [rayleigh 1] [mie 1] [mie_g 0.8] [ozone 1] [intensity 3]
+//                              # physically based sky lit by the sun's settings
+//                              # (see atmosphere.h): densities relative to Earth's;
+//                              # the sun's intensity is then above the air, which
+//                              # dims and reddens it near the horizon
 //   ground [height 0] [material]   # infinite plane y = height (default grey
 //                              # lambertian); "ground off" removes it
 //   light_selection power      # how next event estimation picks a light: power (the
@@ -354,6 +360,8 @@ inline bool load_scene(const std::string& path, scene& result) {
     } sun;
     bool   sky_uniform = false;
     color  sky_radiance;
+    bool   sky_atmosphere = false;
+    atmosphere_settings air;
     bool   ground = false;
     double ground_height = 0;
     std::shared_ptr<material> ground_material = default_material;
@@ -483,17 +491,34 @@ inline bool load_scene(const std::string& path, scene& result) {
         } else if (keyword == "sky") {
             std::string type;
             if (!(in >> type))
-                return fail(line_number, "expected 'sky uniform <r g b>' or 'sky gradient'");
+                return fail(line_number, "expected 'sky uniform <r g b>', 'sky atmosphere [...]' or 'sky gradient'");
             if (type == "uniform") {
                 if (!(in >> sky_radiance[0] >> sky_radiance[1] >> sky_radiance[2]))
                     return fail(line_number, "expected 'sky uniform <r g b>'");
                 sky_uniform = true;
                 cam.use_sky = true;
-            } else if (type == "gradient") {
+                sky_atmosphere = false;
+            } else if (type == "atmosphere") {
+                const char* usage = "expected 'sky atmosphere [rayleigh <x>] [mie <x>] [mie_g <g>] [ozone <x>] [intensity <s>]'";
+                std::string key;
+                while (in >> key) {
+                    bool ok = (key == "rayleigh" && in >> air.rayleigh && air.rayleigh >= 0)
+                           || (key == "mie" && in >> air.mie && air.mie >= 0)
+                           || (key == "mie_g" && in >> air.mie_g && air.mie_g > -1 && air.mie_g < 1)
+                           || (key == "ozone" && in >> air.ozone && air.ozone >= 0)
+                           || (key == "intensity" && in >> air.intensity && air.intensity >= 0);
+                    if (!ok)
+                        return fail(line_number, usage);
+                }
+                sky_atmosphere = true;
                 sky_uniform = false;
                 cam.use_sky = true;
+            } else if (type == "gradient") {
+                sky_uniform = false;
+                sky_atmosphere = false;
+                cam.use_sky = true;
             } else {
-                return fail(line_number, "unknown sky type '" + type + "' (expected uniform or gradient)");
+                return fail(line_number, "unknown sky type '" + type + "' (expected uniform, atmosphere or gradient)");
             }
         } else if (keyword == "ground") {
             std::string key;
@@ -879,10 +904,23 @@ inline bool load_scene(const std::string& path, scene& result) {
         cam.environment = std::make_shared<environment_light>(8, 4, std::vector<color>(32, sky_radiance));
         lights.add(cam.environment);
     }
+    double sun_el = degrees_to_radians(sun.elevation), sun_az = degrees_to_radians(sun.azimuth);
+    vec3 sun_direction(std::cos(sun_el) * std::sin(sun_az), std::sin(sun_el), -std::cos(sun_el) * std::cos(sun_az));
+    color sun_irradiance = sun.intensity * sun.tint;
+    if (sky_atmosphere) {
+        if (cam.environment)
+            return fail(line_number, "'sky atmosphere' and 'environment' can't be used together");
+        // The sky is lit by the sun's settings even with "sun off", which
+        // only removes the sun itself; the sun's light reaches the ground
+        // through the air, reddened by it
+        atmosphere air_model(air);
+        const int w = 256, h = 128;
+        cam.environment = std::make_shared<environment_light>(w, h, air_model.bake(w, h, sun_direction, sun_irradiance));
+        lights.add(cam.environment);
+        sun_irradiance = sun_irradiance * air_model.sun_transmittance(sun_direction);
+    }
     if (sun.on) {
-        double el = degrees_to_radians(sun.elevation), az = degrees_to_radians(sun.azimuth);
-        vec3 direction(std::cos(el) * std::sin(az), std::sin(el), -std::cos(el) * std::cos(az));
-        cam.sun = std::make_shared<sun_light>(direction, sun.angle, sun.intensity * sun.tint);
+        cam.sun = std::make_shared<sun_light>(sun_direction, sun.angle, sun_irradiance);
         cam.sun_disk_visible = sun.disk;
         lights.add(cam.sun);
     }

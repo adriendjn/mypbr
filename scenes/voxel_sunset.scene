@@ -1,0 +1,18 @@
+# The voxel island at sunset under the physically based sky: the sun's
+# light crosses so much air near the horizon that it loses its blue and
+# turns orange, and the shadows grow long.
+
+image_width  800
+aspect_ratio 16/9
+samples_per_pixel 128
+max_depth    16
+
+camera lookfrom 80 35 80  lookat 0 10 0  vfov 50
+tonemap aces
+
+sun elevation 6 azimuth 200 intensity 4 angle 3
+sky atmosphere
+material ground lambertian 0.3 0.3 0.3
+ground ground
+
+vox models/island.vox
