@@ -205,7 +205,12 @@ class dielectric : public material{
             bool cannot_refract = ri * sin_theta > 1.0;  // Total internal reflection
             vec3 direction;
 
-            if (cannot_refract || reflectance(cos_theta, ri) > random_double())
+            // Exact Fresnel, as rough glass uses. Schlick's approximation with
+            // the incident angle stays near 4% inside the glass just before the
+            // critical angle, where the real reflectance climbs to 100%, so the
+            // rims of glass objects came out too dark (found by the Mitsuba
+            // comparison in tools/mitsuba).
+            if (cannot_refract || fresnel_dielectric(cos_theta, 1.0 / ri) > random_double())
                 direction = reflect(unit_direction, rec.normal);
             else
                 direction = refract(unit_direction, rec.normal, ri);
@@ -233,13 +238,6 @@ class dielectric : public material{
             // rec.normal faces the incoming ray; eta is far side over near side
             double eta = rec.front_face ? refraction_index : 1.0 / refraction_index;
             return rough_dielectric_bsdf(rec.normal, -r_in.direction(), eta, alpha);
-        }
-
-        // Schlick's approximation for reflectance.
-        static double reflectance(double cosine, double refraction_index) {
-            auto r0 = (1 - refraction_index) / (1 + refraction_index);
-            r0 = r0*r0;
-            return r0 + (1-r0)*std::pow((1 - cosine), 5);
         }
 };
 
