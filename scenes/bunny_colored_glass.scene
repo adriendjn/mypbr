@@ -1,0 +1,27 @@
+# A tinted glass Stanford bunny (69k triangles) in the original Cornell box:
+# the same scene as bunny_cornell.scene, but the glass absorbs (Beer-Lambert),
+# keeping 55% red, 80% green and 95% blue after 100 units (10 cm) inside, so the
+# thick body is a clear teal-blue and the thin ears are nearly clear.
+# Needs the mesh: run tools/fetch_models.sh first.
+#
+# The bunny is centred on the origin, sitting on y = 0, then scaled to about
+# 30 cm tall, turned and placed on the floor of the box.
+
+image_width  480
+aspect_ratio 1
+samples_per_pixel 256
+max_depth    64
+background   0 0 0
+tonemap      aces
+exposure     1
+
+camera lookfrom 278 273 -800  lookat 278 273 0  vup 0 1 0  vfov 39.3
+
+material white lambertian 0.725 0.71 0.68
+material red   lambertian 0.63 0.065 0.05
+material green lambertian 0.14 0.45 0.091
+material light emissive 17 12 4
+material glass dielectric 1.5 color 0.55 0.8 0.95 distance 100
+
+mesh ../models/cornell_box_empty.obj white
+mesh ../models/external/stanford-bunny.obj smooth glass  translate 0.0168 -0.033 0.0015  scale 2000  rotate_y 210  translate 278 0 260
