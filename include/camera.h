@@ -313,8 +313,10 @@ class camera{
             if (f.x() <= 0 && f.y() <= 0 && f.z() <= 0)
                 return color(0, 0, 0);
 
-            // The shadow ray sees the light only if nothing else is closer
-            ray shadow(rec.p, to_light);
+            // The shadow ray sees the light only if nothing else is closer. Its
+            // direction is normalized so the 0.001 offset is a distance: to_light
+            // reaches the light, and would make it skip a whole unit of the scene.
+            ray shadow(rec.p, unit_vector(to_light));
             hit_record light_rec;
             if (!world.hit(shadow, interval(0.001, infinity), light_rec))
                 return color(0, 0, 0);
