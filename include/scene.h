@@ -5,6 +5,7 @@
 #include "hittable_list.h"
 #include "instance.h"
 #include "material.h"
+#include "medium.h"
 #include "obj_loader.h"
 #include "quad.h"
 #include "sphere.h"
@@ -61,6 +62,9 @@ class scene{
 // color 0.8 0.8 0.8, metallic 0, roughness 0.5, ior 1.5); "texture <name>"
 // can replace "color r g b".
 //   material lamp   emissive 15 15 15         # area light, radiance r g b
+//   material haze   volume 0.9 0.9 0.9 g 0.3  # for media: scattering albedo r g b,
+//                                             # optional Henyey-Greenstein g in (-1, 1)
+//                                             # (0 = isotropic, > 0 = forward)
 //
 //   background   0 0 0         # constant background instead of the sky gradient
 //   exposure     0             # stops; display images are scaled by 2^exposure
@@ -81,6 +85,15 @@ class scene{
 //
 //   translate x y z | scale s | scale sx sy sz | rotate_x|rotate_y|rotate_z deg
 //   rotate deg ax ay az   # about an arbitrary axis
+//
+// Participating media (fog, smoke) fill a sphere or box with a constant
+// density (collisions per unit length; light goes 1/density on average
+// before scattering). They take a volume material and transforms like other
+// objects:
+//
+//   medium 0.01  box 1 1 1  554 554 554  haze      # density, boundary, material
+//   medium 0.05  sphere 0 1 0  1  haze  translate 2 0 0
+//   fog    0.002 haze      # fills the bounding box of everything in the scene
 //
 // Transformed objects are instances sharing the original geometry; a mesh
 // file used several times with the same material is loaded once. In a mesh,
@@ -240,6 +253,10 @@ inline bool load_scene(const std::string& path, scene& result) {
     // "mesh" lines share geometry and only add instances.
     std::map<std::tuple<std::string, bool, const material*>, std::vector<obj_part>> mesh_cache;
 
+    // Global fog, added once the whole scene (and so its extent) is known
+    double fog_density = 0;
+    std::shared_ptr<material> fog_material;
+
     std::string line;
     int line_number = 0;
     while (std::getline(file, line)) {
@@ -393,6 +410,16 @@ inline bool load_scene(const std::string& path, scene& result) {
                         return fail(line_number, error.empty() ? "bad value for principled setting '" + key + "'" : error);
                 }
                 mat = std::make_shared<principled>(base, metallic, roughness, ior);
+            } else if (type == "volume") {
+                double r, g, b, aniso = 0;
+                std::string key;
+                if (!(in >> r >> g >> b))
+                    return fail(line_number, "expected 'material <name> volume <r> <g> <b> [g <anisotropy>]'");
+                if (in >> key) {
+                    if (key != "g" || !(in >> aniso) || aniso <= -1 || aniso >= 1)
+                        return fail(line_number, "expected 'material <name> volume <r> <g> <b> [g <anisotropy between -1 and 1>]'");
+                }
+                mat = std::make_shared<phase_material>(color(r, g, b), aniso);
             } else if (type == "emissive") {
                 double r, g, b;
                 if (!(in >> r >> g >> b))
@@ -435,6 +462,44 @@ inline bool load_scene(const std::string& path, scene& result) {
             }
             if (!add_object(object, mat, xform, transformed, error))
                 return fail(line_number, error);
+        } else if (keyword == "medium") {
+            double density;
+            std::string shape, error;
+            std::shared_ptr<hittable> boundary;
+            std::shared_ptr<material> mat;
+            transform xform;
+            bool transformed;
+            if (!(in >> density >> shape) || density <= 0)
+                return fail(line_number, "expected 'medium <positive density> sphere|box <...> <material> [transforms]'");
+            if (shape == "sphere") {
+                double x, y, z, radius;
+                if (!(in >> x >> y >> z >> radius) || radius <= 0)
+                    return fail(line_number, "expected 'medium <density> sphere <x> <y> <z> <positive radius> <material>'");
+                boundary = std::make_shared<sphere>(point3(x, y, z), radius, default_material);
+            } else if (shape == "box") {
+                point3 a, b;
+                if (!(in >> a[0] >> a[1] >> a[2] >> b[0] >> b[1] >> b[2]))
+                    return fail(line_number, "expected 'medium <density> box <x0 y0 z0> <x1 y1 z1> <material>'");
+                boundary = box(a, b, default_material);
+            } else {
+                return fail(line_number, "a medium's boundary must be 'sphere' or 'box'");
+            }
+            if (!read_tail(in, mat, xform, transformed, error))
+                return fail(line_number, error);
+            if (!std::dynamic_pointer_cast<phase_material>(mat))
+                return fail(line_number, "a medium needs a volume material");
+            // The boundary is transformed, not the medium, so densities stay in world units
+            if (transformed)
+                boundary = std::make_shared<instance>(boundary, xform);
+            world.add(std::make_shared<constant_medium>(boundary, density, mat));
+        } else if (keyword == "fog") {
+            std::string name;
+            if (!(in >> fog_density >> name) || fog_density <= 0)
+                return fail(line_number, "expected 'fog <positive density> <volume material>'");
+            auto it = materials.find(name);
+            if (it == materials.end() || !std::dynamic_pointer_cast<phase_material>(it->second))
+                return fail(line_number, "expected a volume material, got '" + name + "'");
+            fog_material = it->second;
         } else if (keyword == "mesh") {
             std::string file, error;
             std::shared_ptr<material> mat;
@@ -479,6 +544,12 @@ inline bool load_scene(const std::string& path, scene& result) {
 
     if (world.empty())
         return fail(line_number, "the scene has no objects");
+    if (fog_material) {
+        auto extent = world.bounding_box();
+        point3 lo(extent.x.min, extent.y.min, extent.z.min);
+        point3 hi(extent.x.max, extent.y.max, extent.z.max);
+        world.add(std::make_shared<constant_medium>(box(lo, hi, default_material), fog_density, fog_material));
+    }
     if ((cam.lookfrom - cam.lookat).near_zero() || cross(cam.vup, cam.lookfrom - cam.lookat).near_zero())
         return fail(line_number, "camera lookfrom must differ from lookat, and vup must not point along the view");
 
