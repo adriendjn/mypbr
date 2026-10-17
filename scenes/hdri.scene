@@ -1,0 +1,32 @@
+# Spheres lit only by an HDR sky (no area lights): a low sun over a quarry.
+# The sun covers a tiny part of the image but holds about half its energy,
+# which is why the environment is importance sampled; with BSDF sampling
+# alone almost no ray would find it and the shadows would be noise.
+#
+# textures/quarry_01_1k.hdr: "Quarry 01" by Greg Zaal, Poly Haven (CC0),
+# 1k copy from the three.js examples.
+
+image_width  800
+aspect_ratio 16/9
+samples_per_pixel 256
+max_depth    16
+
+camera lookfrom 0 1.2 5  lookat 0 0.45 0  vfov 32
+
+environment ../textures/quarry_01_1k.hdr  rotate 100
+exposure    -1
+tonemap     aces
+
+material floor  principled color 0.6 0.6 0.6 roughness 0.6
+material white  lambertian 0.8 0.8 0.8
+material gold   metal 1.0 0.78 0.34 0.25
+material mirror metal 0.95 0.95 0.95 0
+material glass  dielectric 1.5
+material paint  principled color 0.7 0.08 0.05 roughness 0.3
+
+quad   -6 0 -6  12 0 0  0 0 12  floor
+sphere -1.65 0.5 0    0.5  white
+sphere -0.55 0.5 0    0.5  gold
+sphere  0.55 0.5 0    0.5  glass
+sphere  1.65 0.5 0    0.5  paint
+sphere  0    0.3 1.1  0.3  mirror
