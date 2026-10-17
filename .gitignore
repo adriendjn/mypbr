@@ -5,3 +5,4 @@ build/
 /*.hdr
 /*.pfm
 models/external/
+__pycache__/
