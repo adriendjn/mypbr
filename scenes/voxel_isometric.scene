@@ -1,0 +1,20 @@
+# The voxel island in MagicaVoxel's isometric view: an orthographic camera
+# looking along (-1, -1, -1), outlined voxels, valley mist (height fog),
+# MagicaVoxel's bounce caps, and shadow rays that cross the water so the
+# sunlit sand shows through it.
+
+image_width 800
+aspect_ratio 16/9
+samples_per_pixel 128
+max_depth 16
+camera lookfrom 100 100 100 lookat 0 6 0 vup 0 1 0 ortho 60 focus 170
+tonemap aces
+sun elevation 40 azimuth 200 intensity 4 angle 3
+sky atmosphere
+material ground lambertian 0.3 0.3 0.3
+ground ground
+material haze volume 0.9 0.9 0.9 g 0.5
+height_fog 0.004 6 haze
+bounces diffuse 2 specular 5 scatter 5
+transparent_shadows on
+vox models/island.vox edges 0.05

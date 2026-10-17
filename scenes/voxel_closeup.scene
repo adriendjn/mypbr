@@ -1,0 +1,18 @@
+# Close-up of the voxel island with camera effects: shallow depth of field
+# through a six-bladed aperture (the miniature look), bloom around the
+# lantern and a vignette. Focused on the lantern.
+
+image_width 800
+aspect_ratio 16/9
+samples_per_pixel 128
+max_depth 16
+camera lookfrom 34 22 30 lookat 9 12 6 vup 0 1 0 vfov 30
+camera aperture 1.2 focus 35 blades 6 blade_rotation 15
+tonemap aces
+bloom 0.4 threshold 1 radius 0.05
+vignette 0.4
+sun elevation 25 azimuth 200 intensity 3 angle 4
+sky uniform 0.35 0.45 0.65
+material ground lambertian 0.3 0.3 0.3
+ground ground
+vox models/island.vox

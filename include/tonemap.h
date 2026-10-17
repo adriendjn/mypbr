@@ -2,6 +2,7 @@
 #define TONEMAP_H
 
 #include "color3.h"
+#include "postprocess.h"
 
 #include <string>
 
@@ -12,6 +13,7 @@ class display_settings{
     public:
         double     exposure = 0;                // In stops: radiance is scaled by 2^exposure
         tonemapper op       = tonemapper::none; // none clamps, so bright areas clip
+        post_settings post;                     // Bloom and vignetting, before all that
 
         // Parses "none", "reinhard" or "aces"; returns false if unknown.
         bool set_tonemapper(const std::string& name) {

@@ -1,6 +1,7 @@
 #ifndef SCENE_H
 #define SCENE_H
 
+#include "atmosphere.h"
 #include "camera.h"
 #include "hittable_list.h"
 #include "instance.h"
@@ -8,11 +9,14 @@
 #include "material.h"
 #include "medium.h"
 #include "obj_loader.h"
+#include "plane.h"
 #include "quad.h"
 #include "sphere.h"
+#include "sun.h"
 #include "texture.h"
 #include "tonemap.h"
 #include "transform.h"
+#include "voxel.h"
 
 #include <fstream>
 #include <iostream>
@@ -26,6 +30,8 @@
 class scene{
     public:
         hittable_list    world;
+        hittable_list    unbounded;  // Objects without a finite bounding box (the
+                                     // ground), tested beside world's BVH
         light_list       lights;   // Emissive objects (also part of world) and the environment
         camera           cam;
         display_settings display;  // How radiance becomes PNG/PPM pixels
@@ -43,6 +49,26 @@ class scene{
 //
 //   camera lookfrom 13 2 3  lookat 0 0 0  vup 0 1 0  vfov 20
 //   aperture     0.6           # defocus angle in degrees (0 = pinhole)
+//   camera blades 6 blade_rotation 15   # polygonal aperture: hexagonal bokeh
+//   camera ortho 40            # orthographic projection showing 40 units of height
+//                              # (0 = perspective); from lookfrom along (1, 1, 1)
+//                              # towards lookat, it is the isometric view
+//
+//   style voxel                # MagicaVoxel's look in one line, the same as:
+//                              #   tonemap aces, bloom 0.25, vignette 0.25,
+//                              #   sun elevation 50 azimuth 50 intensity 4 angle 3,
+//                              #   sky atmosphere, ground (grey 0.3),
+//                              #   bounces diffuse 2 specular 5 scatter 5,
+//                              #   transparent_shadows on
+//                              # Lines after it change any of these; "style classic"
+//                              # puts back the defaults (physically exact bounces,
+//                              # gradient sky, no sun or ground, no tonemap)
+//   bounces diffuse 2 specular 5 scatter 5   # MagicaVoxel-style caps on each kind
+//                              # of bounce (0 = no cap): fewer diffuse bounces render
+//                              # faster and darken crevices (a look, not physics)
+//   transparent_shadows on     # shadow rays cross smooth glass in a straight line,
+//                              # tinted (MagicaVoxel's translucent shadows): sunlit
+//                              # water without caustic noise, but not exact
 //   focus        10            # distance to the plane of perfect focus
 //
 // The camera line takes any of its settings, in any order; aperture and
@@ -88,8 +114,28 @@ class scene{
 //   environment  textures/sky.hdr  [intensity 1] [rotate 0]
 //                              # equirectangular HDR sky that also lights the scene
 //                              # (importance sampled); rotate turns it about y, in degrees
+//   sun elevation 50 azimuth 45 [intensity 3] [color 1 1 1] [angle 4] [disk on]
+//                              # distant light: elevation above the horizon and
+//                              # azimuth (from -z towards +x) in degrees; intensity is
+//                              # the irradiance on a surface facing it; angle is its
+//                              # angular diameter in degrees (softer shadows when
+//                              # larger, same brightness); disk off hides the sun
+//                              # itself from the camera. "sun off" removes it
+//   sky uniform 0.5 0.6 0.8    # sky of constant radiance (importance sampled like an
+//                              # environment); "sky gradient" is the default sky
+//   sky atmosphere [rayleigh 1] [mie 1] [mie_g 0.8] [ozone 1] [intensity 3]
+//                              # physically based sky lit by the sun's settings
+//                              # (see atmosphere.h): densities relative to Earth's;
+//                              # the sun's intensity is then above the air, which
+//                              # dims and reddens it near the horizon
+//   ground [height 0] [material]   # infinite plane y = height (default grey
+//                              # lambertian); "ground off" removes it
 //   light_selection power      # how next event estimation picks a light: power (the
 //                              # default, in proportion to emitted power) or uniform
+//   bloom 0.3 [threshold 1] [radius 0.04]   # glow around radiance above the
+//                              # threshold, reaching radius x image width; strength
+//                              # 0 is off (display images only, like the next ones)
+//   vignette     0.3           # darker corners (0 = off)
 //   exposure     0             # stops; display images are scaled by 2^exposure
 //   tonemap      aces          # none (clamp, the default), reinhard or aces
 //
@@ -100,6 +146,18 @@ class scene{
 //                                                     # to the scene file; smooth
 //                                                     # makes vertex normals if the
 //                                                     # file has none
+//
+//   vox    models/island.vox  [quads] [emission 1]    # MagicaVoxel model or scene:
+//                                                     # every model the file's scene
+//                                                     # graph places, with its palette
+//                                                     # and materials (see voxel.h);
+//                                                     # one voxel is one unit, z-up
+//                                                     # turned to y-up; emission scales
+//                                                     # the emissive voxels; quads uses
+//                                                     # faces in a BVH instead of the
+//                                                     # voxel grid (same image, slower)
+//   vox    models/island.vox  edges 0.06 [0 0 0]      # outlines the voxel shapes
+//                                                     # (grid only), width in voxels
 //
 // Any object can be followed by transforms, applied in the order given:
 //
@@ -117,6 +175,9 @@ class scene{
 //   medium 0.01  box 1 1 1  554 554 554  haze      # density, boundary, material
 //   medium 0.05  sphere 0 1 0  1  haze  translate 2 0 0
 //   fog    0.002 haze      # fills the bounding box of everything in the scene
+//   height_fog 0.02 8 haze [base 0]   # fog everywhere, density 0.02 at y = base,
+//                              # falling by e every 8 units up: valley mist, and
+//                              # a horizon that fades into the sky
 //
 // Transformed objects are instances sharing the original geometry; a mesh
 // file used several times with the same material is loaded once. In a mesh,
@@ -310,6 +371,25 @@ inline bool load_scene(const std::string& path, scene& result) {
         return true;
     };
 
+    // The sun, sky and ground are created at the end of the file, so later
+    // lines can change what earlier ones set
+    class sun_settings{
+        public:
+            bool   on = false;
+            double elevation = 45, azimuth = 45;  // Degrees
+            double intensity = 3;                 // Irradiance
+            color  tint = color(1, 1, 1);
+            double angle = 4;                     // Angular diameter, degrees
+            bool   disk = true;
+    } sun;
+    bool   sky_uniform = false;
+    color  sky_radiance;
+    bool   sky_atmosphere = false;
+    atmosphere_settings air;
+    bool   ground = false;
+    double ground_height = 0;
+    std::shared_ptr<material> ground_material = default_material;
+
     // Meshes already loaded, by file and default material, so repeated
     // "mesh" lines share geometry and only add instances.
     std::map<std::tuple<std::string, bool, const material*, bool>, std::vector<obj_part>> mesh_cache;
@@ -364,6 +444,9 @@ inline bool load_scene(const std::string& path, scene& result) {
                 else if (key == "vfov")     ok = bool(in >> cam.vfov) && cam.vfov > 0 && cam.vfov < 180;
                 else if (key == "aperture") ok = bool(in >> cam.defocus_angle) && cam.defocus_angle >= 0;
                 else if (key == "focus")    ok = bool(in >> cam.focus_dist) && cam.focus_dist > 0;
+                else if (key == "ortho")    ok = bool(in >> cam.ortho_height) && cam.ortho_height >= 0;
+                else if (key == "blades")   ok = bool(in >> cam.blades) && (cam.blades == 0 || cam.blades >= 3);
+                else if (key == "blade_rotation") ok = bool(in >> cam.blade_rotation);
                 else return fail(line_number, "unknown camera setting '" + key + "'");
                 if (!ok)
                     return fail(line_number, "bad value for camera setting '" + key + "'");
@@ -409,6 +492,145 @@ inline bool load_scene(const std::string& path, scene& result) {
                 return fail(line_number, "only one environment is allowed");
             cam.environment = sky;
             lights.add(sky);  // Sampled by next event estimation; never hit, so not in world
+        } else if (keyword == "sun") {
+            const char* usage = "expected 'sun elevation <deg> azimuth <deg> [intensity <E>] [color <r g b>] "
+                                "[angle <deg>] [disk on|off]' or 'sun off'";
+            std::string key;
+            sun.on = true;
+            while (in >> key) {
+                bool ok = true;
+                if (key == "off")            sun.on = false;
+                else if (key == "elevation") ok = bool(in >> sun.elevation) && sun.elevation >= -90 && sun.elevation <= 90;
+                else if (key == "azimuth")   ok = bool(in >> sun.azimuth);
+                else if (key == "intensity") ok = bool(in >> sun.intensity) && sun.intensity >= 0;
+                else if (key == "color")     ok = bool(in >> sun.tint[0] >> sun.tint[1] >> sun.tint[2]);
+                else if (key == "angle")     ok = bool(in >> sun.angle) && sun.angle > 0 && sun.angle < 90;
+                else if (key == "disk") {
+                    std::string value;
+                    ok = bool(in >> value) && (value == "on" || value == "off");
+                    sun.disk = value == "on";
+                } else ok = false;
+                if (!ok)
+                    return fail(line_number, usage);
+            }
+        } else if (keyword == "sky") {
+            std::string type;
+            if (!(in >> type))
+                return fail(line_number, "expected 'sky uniform <r g b>', 'sky atmosphere [...]' or 'sky gradient'");
+            if (type == "uniform") {
+                if (!(in >> sky_radiance[0] >> sky_radiance[1] >> sky_radiance[2]))
+                    return fail(line_number, "expected 'sky uniform <r g b>'");
+                sky_uniform = true;
+                cam.use_sky = true;
+                sky_atmosphere = false;
+            } else if (type == "atmosphere") {
+                const char* usage = "expected 'sky atmosphere [rayleigh <x>] [mie <x>] [mie_g <g>] [ozone <x>] [intensity <s>]'";
+                std::string key;
+                while (in >> key) {
+                    bool ok = (key == "rayleigh" && in >> air.rayleigh && air.rayleigh >= 0)
+                           || (key == "mie" && in >> air.mie && air.mie >= 0)
+                           || (key == "mie_g" && in >> air.mie_g && air.mie_g > -1 && air.mie_g < 1)
+                           || (key == "ozone" && in >> air.ozone && air.ozone >= 0)
+                           || (key == "intensity" && in >> air.intensity && air.intensity >= 0);
+                    if (!ok)
+                        return fail(line_number, usage);
+                }
+                sky_atmosphere = true;
+                sky_uniform = false;
+                cam.use_sky = true;
+            } else if (type == "gradient") {
+                sky_uniform = false;
+                sky_atmosphere = false;
+                cam.use_sky = true;
+            } else {
+                return fail(line_number, "unknown sky type '" + type + "' (expected uniform, atmosphere or gradient)");
+            }
+        } else if (keyword == "ground") {
+            std::string key;
+            ground = true;
+            while (in >> key) {
+                if (key == "off") {
+                    ground = false;
+                } else if (key == "height") {
+                    if (!(in >> ground_height))
+                        return fail(line_number, "expected 'ground [height <y>] [material]'");
+                } else {
+                    auto it = materials.find(key);
+                    if (it == materials.end())
+                        return fail(line_number, "unknown material '" + key + "'");
+                    ground_material = it->second;
+                }
+            }
+        } else if (keyword == "style") {
+            // A preset of the lines below; lines after it can change any of them
+            std::string name;
+            if (!(in >> name) || (name != "voxel" && name != "classic"))
+                return fail(line_number, "expected 'style voxel' or 'style classic'");
+            bool voxel = name == "voxel";
+            auto& post = result.display.post;
+            result.display.op = voxel ? tonemapper::aces : tonemapper::none;
+            post = post_settings();
+            sun = sun_settings();
+            sky_uniform = false;
+            sky_atmosphere = voxel;
+            air = atmosphere_settings();
+            cam.use_sky = true;
+            ground = voxel;
+            ground_material = voxel ? std::make_shared<lambertian>(color(0.3, 0.3, 0.3)) : default_material;
+            cam.max_diffuse = voxel ? 2 : 0;
+            cam.max_specular = voxel ? 5 : 0;
+            cam.max_scatter = voxel ? 5 : 0;
+            cam.transparent_shadows = voxel;
+            if (voxel) {
+                post.bloom = 0.25;
+                post.vignette = 0.25;
+                sun.on = true;
+                sun.elevation = 50;
+                sun.azimuth = 50;
+                sun.intensity = 4;
+                sun.angle = 3;
+            }
+        } else if (keyword == "bounces") {
+            const char* usage = "expected 'bounces [diffuse <n>] [specular <n>] [scatter <n>]'";
+            std::string key;
+            while (in >> key) {
+                bool ok = (key == "diffuse" && in >> cam.max_diffuse && cam.max_diffuse >= 0)
+                       || (key == "specular" && in >> cam.max_specular && cam.max_specular >= 0)
+                       || (key == "scatter" && in >> cam.max_scatter && cam.max_scatter >= 0);
+                if (!ok)
+                    return fail(line_number, usage);
+            }
+        } else if (keyword == "transparent_shadows") {
+            std::string value;
+            if (!(in >> value) || (value != "on" && value != "off"))
+                return fail(line_number, "expected 'transparent_shadows on|off'");
+            cam.transparent_shadows = value == "on";
+        } else if (keyword == "height_fog") {
+            double density, scale, base = 0;
+            std::string name, key;
+            if (!(in >> density >> scale >> name) || density <= 0 || scale <= 0)
+                return fail(line_number, "expected 'height_fog <density> <scale height> <volume material> [base <y>]'");
+            if (in >> key && (key != "base" || !(in >> base)))
+                return fail(line_number, "expected 'height_fog <density> <scale height> <volume material> [base <y>]'");
+            auto it = materials.find(name);
+            if (it == materials.end() || !std::dynamic_pointer_cast<phase_material>(it->second))
+                return fail(line_number, "expected a volume material, got '" + name + "'");
+            result.unbounded.add(std::make_shared<height_fog>(density, scale, base, it->second));
+        } else if (keyword == "bloom") {
+            auto& post = result.display.post;
+            const char* usage = "expected 'bloom <strength> [threshold <radiance>] [radius <fraction of width>]'";
+            std::string key;
+            if (!(in >> post.bloom) || post.bloom < 0)
+                return fail(line_number, usage);
+            while (in >> key) {
+                bool ok = (key == "threshold" && in >> post.bloom_threshold && post.bloom_threshold >= 0)
+                       || (key == "radius" && in >> post.bloom_radius && post.bloom_radius > 0);
+                if (!ok)
+                    return fail(line_number, usage);
+            }
+        } else if (keyword == "vignette") {
+            if (!(in >> result.display.post.vignette) || result.display.post.vignette < 0)
+                return fail(line_number, "expected 'vignette <strength>'");
         } else if (keyword == "exposure") {
             if (!(in >> result.display.exposure))
                 return fail(line_number, "expected 'exposure <stops>'");
@@ -636,6 +858,95 @@ inline bool load_scene(const std::string& path, scene& result) {
             if (it == materials.end() || !std::dynamic_pointer_cast<phase_material>(it->second))
                 return fail(line_number, "expected a volume material, got '" + name + "'");
             fog_material = it->second;
+        } else if (keyword == "vox") {
+            const char* usage = "expected 'vox <file.vox> [quads] [emission <scale>] [edges <width> [<r g b>]] [transforms]'";
+            std::string file, token, error;
+            if (!(in >> file))
+                return fail(line_number, usage);
+            if (file[0] != '/')
+                file = scene_dir + file;
+            // Options come first; the rest are transforms
+            bool quads = false;
+            double emission = 1, edge_width = 0;
+            color edge_color(0, 0, 0);
+            std::vector<std::string> rest;
+            while (in >> token)
+                rest.push_back(token);
+            size_t k = 0;
+            for (; k < rest.size(); k++) {
+                if (rest[k] == "quads") {
+                    quads = true;
+                } else if (rest[k] == "emission" && k + 1 < rest.size()) {
+                    std::istringstream number(rest[++k]);
+                    if (!(number >> emission) || emission < 0)
+                        return fail(line_number, usage);
+                } else if (rest[k] == "edges" && k + 1 < rest.size()) {
+                    // edges <width> [r g b]
+                    std::istringstream number(rest[++k]);
+                    if (!(number >> edge_width) || edge_width <= 0 || edge_width >= 0.5)
+                        return fail(line_number, usage);
+                    if (k + 3 < rest.size()) {
+                        std::istringstream rgb(rest[k + 1] + ' ' + rest[k + 2] + ' ' + rest[k + 3]);
+                        color c;
+                        if (rgb >> c[0] >> c[1] >> c[2]) {
+                            edge_color = c;
+                            k += 3;
+                        }
+                    }
+                } else {
+                    break;
+                }
+            }
+            std::string tail_text;
+            for (; k < rest.size(); k++)
+                tail_text += rest[k] + ' ';
+            std::istringstream tail(tail_text);
+            std::shared_ptr<material> mat;
+            transform xform;
+            bool transformed;
+            if (!read_tail(tail, mat, xform, transformed, error))
+                return fail(line_number, error);
+            if (mat != default_material)
+                return fail(line_number, "vox models take their materials from the file's palette");
+
+            vox_file vox;
+            if (!load_vox(file, vox, error))
+                return fail(line_number, error);
+            auto palette = std::make_shared<voxel_palette>(make_voxel_palette(vox, emission));
+
+            // Geometry per model, shared by the instances that place it: a
+            // voxel grid, or with "quads" its visible faces in a BVH (slower,
+            // kept as a reference). Emissive faces are lights either way;
+            // with a grid they are only sampled, the grid itself is hit.
+            std::vector<std::shared_ptr<hittable>> geometry(vox.models.size());
+            std::vector<std::shared_ptr<hittable_list>> emitters(vox.models.size());
+            size_t faces = 0;
+            for (size_t m = 0; m < vox.models.size(); m++) {
+                hittable_list list;
+                emitters[m] = std::make_shared<hittable_list>();
+                voxel_model_faces(vox.models[m], *palette, list, *emitters[m]);
+                faces += list.objects.size();
+                if (quads)
+                    geometry[m] = std::make_shared<bvh>(list);
+                else
+                    geometry[m] = voxel_blocks(std::make_shared<vox_model>(vox.models[m]), palette, 8,
+                                               edge_width > 0 ? std::make_shared<lambertian>(edge_color) : nullptr,
+                                               edge_width);
+            }
+            std::clog << "Loaded " << file << ": " << vox.models.size() << " models, "
+                      << vox.instances.size() << " instances, " << faces << " visible faces\n";
+
+            // MagicaVoxel is z-up: turn its +z to mypbr's +y (and +y to -z)
+            transform z_up = transform::rotate(-90, vec3(1, 0, 0));
+            for (const auto& placed : vox.instances) {
+                transform to_world = xform.then_after(z_up.then_after(placed.xform));
+                world.add(std::make_shared<instance>(geometry[placed.model], to_world));
+                if (!emitters[placed.model]->empty()) {
+                    if (!to_world.is_similarity())
+                        return fail(line_number, "a vox model with emissive voxels can only be scaled uniformly");
+                    lights.add(std::make_shared<instance>(emitters[placed.model], to_world));
+                }
+            }
         } else if (keyword == "mesh") {
             std::string file, error;
             std::shared_ptr<material> mat;
@@ -680,6 +991,37 @@ inline bool load_scene(const std::string& path, scene& result) {
 
     if (world.empty())
         return fail(line_number, "the scene has no objects");
+
+    if (sky_uniform) {
+        if (cam.environment)
+            return fail(line_number, "'sky uniform' and 'environment' can't be used together");
+        // A tiny constant image: importance sampling then reduces to uniform
+        // sampling over the sphere
+        cam.environment = std::make_shared<environment_light>(8, 4, std::vector<color>(32, sky_radiance));
+        lights.add(cam.environment);
+    }
+    double sun_el = degrees_to_radians(sun.elevation), sun_az = degrees_to_radians(sun.azimuth);
+    vec3 sun_direction(std::cos(sun_el) * std::sin(sun_az), std::sin(sun_el), -std::cos(sun_el) * std::cos(sun_az));
+    color sun_irradiance = sun.intensity * sun.tint;
+    if (sky_atmosphere) {
+        if (cam.environment)
+            return fail(line_number, "'sky atmosphere' and 'environment' can't be used together");
+        // The sky is lit by the sun's settings even with "sun off", which
+        // only removes the sun itself; the sun's light reaches the ground
+        // through the air, reddened by it
+        atmosphere air_model(air);
+        const int w = 256, h = 128;
+        cam.environment = std::make_shared<environment_light>(w, h, air_model.bake(w, h, sun_direction, sun_irradiance));
+        lights.add(cam.environment);
+        sun_irradiance = sun_irradiance * air_model.sun_transmittance(sun_direction);
+    }
+    if (sun.on) {
+        cam.sun = std::make_shared<sun_light>(sun_direction, sun.angle, sun_irradiance);
+        cam.sun_disk_visible = sun.disk;
+        lights.add(cam.sun);
+    }
+    if (ground)
+        result.unbounded.add(std::make_shared<ground_plane>(ground_height, ground_material));
     if (fog_material) {
         auto extent = world.bounding_box();
         point3 lo(extent.x.min, extent.y.min, extent.z.min);

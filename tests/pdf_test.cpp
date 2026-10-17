@@ -2,6 +2,7 @@
 // that its value() matches the density of the directions generate() draws.
 
 #include <environment.h>
+#include <sun.h>
 #include <hittable_list.h>
 #include <instance.h>
 #include <light_list.h>
@@ -159,6 +160,20 @@ int main() {
     // Standard deviation about 0.08: dim sky directions are rare and weigh 1 / pdf
     ok &= check("environment sampling", cap_solid_angle(to_sky, vec3(0, 1, 0), -1.0), 4 * pi, 0.4);
     ok &= check("environment upper hemisphere", cap_solid_angle(to_sky, vec3(0, 1, 0), 0.0), 2 * pi, 0.15);
+
+    // The sun: a narrow cone, sampled uniformly. integral() would miss a cone
+    // this small, so check sampling against the cone's solid angle instead,
+    // and that every sample lands inside it.
+    for (double angle : {0.53, 4.0, 30.0}) {
+        sun_light sun(vec3(0.3, 1, -0.4), angle, color(3, 3, 3));
+        hittable_pdf to_sun(sun, origin);
+        double cos_max = std::cos(degrees_to_radians(angle) / 2);
+        auto name = "sun, " + std::to_string(angle).substr(0, 4) + " degrees";
+        ok &= check(name + " sampling", cap_solid_angle(to_sun, sun.direction(), cos_max),
+                    2 * pi * (1 - cos_max), 0.02 * 2 * pi * (1 - cos_max));
+        if (angle > 10)
+            ok &= check(name + " pdf integral", integral_defensive(to_sun), 1.0, 0.05);
+    }
 
     // Power-weighted light selection, with lights of very different power:
     // the sky above, a small bright lamp, a big dim panel (scaled up by an

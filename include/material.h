@@ -60,6 +60,14 @@ class material{
         // Radiance leaving the front face, averaged over the surface. Only an
         // estimate, used to pick lights in proportion to their power.
         virtual color average_emission() const { return color(0, 0, 0); }
+
+        // True for smooth glass: with camera::transparent_shadows, shadow rays
+        // go straight through it (see camera.h).
+        virtual bool lets_shadows_through() const { return false; }
+
+        // True for the phase function of a participating medium, whose
+        // scattering events camera::max_scatter counts apart from surface bounces.
+        virtual bool is_volume() const { return false; }
 };
 
 class lambertian : public material{
@@ -184,6 +192,8 @@ class dielectric : public material{
             double d = rec.t * r.direction().length();
             return color(std::exp(-sigma_a.x() * d), std::exp(-sigma_a.y() * d), std::exp(-sigma_a.z() * d));
         }
+
+        bool lets_shadows_through() const override { return roughness == 0; }
 
         bool scatter(const ray& r_in, const hit_record& rec, scatter_record& srec) const override {
             if (roughness > 0) {

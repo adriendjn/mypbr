@@ -7,6 +7,7 @@
 #include "environment.h"
 #include "hittable_list.h"
 #include "material.h"
+#include "sun.h"
 
 #include <algorithm>
 #include <atomic>
@@ -21,6 +22,16 @@ class camera{
         int    image_width  = 100;  // Rendered image width in pixels
         int    samples_per_pixel = 10;  // Count of random samples for each pixel
         int    max_depth         = 10;  // Hard cap on bounces; Russian roulette usually ends paths sooner
+        // Separate caps by kind of bounce, as MagicaVoxel has (a look, not
+        // physics: fewer diffuse bounces darken deep crevices); 0 = no cap
+        int    max_diffuse  = 0;  // Non-specular surface bounces
+        int    max_specular = 0;  // Mirror and smooth glass bounces
+        int    max_scatter  = 0;  // Scattering events in media
+        // Shadow rays pass straight through smooth glass, tinted by its
+        // absorption but not bent (MagicaVoxel's translucent shadows): water
+        // and windows then let sunlight through without caustic noise. Biased:
+        // the light that would be refracted elsewhere lands in a straight line.
+        bool   transparent_shadows = false;
 
         double vfov     = 90;               // Vertical view angle (field of view)
         point3 lookfrom = point3(0, 0, 0);  // Point camera is looking from
@@ -31,9 +42,14 @@ class camera{
         color  background = color(0, 0, 0);  // ...a constant background color
         std::shared_ptr<environment_light> environment;  // HDR sky; overrides both, and
                                                          // must also be in the lights
+        std::shared_ptr<sun_light> sun;  // Added to any of them; must also be in the lights
+        bool   sun_disk_visible = true;  // Whether camera rays see the sun itself
 
+        double ortho_height  = 0;  // > 0: orthographic projection, showing this height of the scene
         double defocus_angle = 0;  // Variation angle of rays through each pixel
         double focus_dist    = 10; // Distance from camera lookfrom point to plane of perfect focus
+        int    blades        = 0;  // Aperture shape: a regular polygon of this many sides (0 = round)
+        double blade_rotation = 0; // Turn of that polygon, in degrees
 
         int    threads = 0;  // Worker threads; 0 uses every hardware thread
 
@@ -135,7 +151,8 @@ class camera{
             // Viewport dimensions
             auto theta = degrees_to_radians(vfov);
             auto h = std::tan(theta/2);
-            auto viewport_height = 2 * h * focus_dist;
+            // An orthographic view shows the same size at every distance
+            auto viewport_height = ortho_height > 0 ? ortho_height : 2 * h * focus_dist;
             auto viewport_width = viewport_height * (double(image_width)/image_height);
 
             // Unit basis vectors for the camera coordinate frame
@@ -276,7 +293,10 @@ class camera{
                               + ((i + offset.x()) * pixel_delta_u)
                               + ((j + offset.y()) * pixel_delta_v);
 
-            auto ray_origin = (defocus_angle <= 0) ? center : defocus_disk_sample();
+            // Orthographic rays are parallel, each from its own point of the
+            // image plane through lookfrom (moved over the lens with defocus)
+            point3 eye = ortho_height > 0 ? pixel_sample + focus_dist * w : center;
+            auto ray_origin = (defocus_angle <= 0) ? eye : eye + defocus_offset();
             return ray(ray_origin, pixel_sample - ray_origin);
         }
 
@@ -293,10 +313,29 @@ class camera{
             return vec3(px, py, 0);
         }
 
-        // Returns a random point in the camera defocus disk.
-        point3 defocus_disk_sample() const {
-            auto p = random_in_unit_disk();
-            return center + (p[0] * defocus_disk_u) + (p[1] * defocus_disk_v);
+        // Returns a random offset in the camera defocus disk, or in the regular
+        // polygon inscribed in it when the aperture has blades. Out-of-focus
+        // highlights take the aperture's shape (bokeh), since each is the
+        // aperture seen through the lens.
+        vec3 defocus_offset() const {
+            vec3 p = blades >= 3 ? random_in_polygon() : random_in_unit_disk();
+            return (p[0] * defocus_disk_u) + (p[1] * defocus_disk_v);
+        }
+
+        // Uniform in a regular polygon with vertices on the unit circle: the
+        // polygon is blades equal triangles around the center, so pick one,
+        // then a uniform point in it (folding the unit square onto the
+        // triangle keeps the density uniform).
+        vec3 random_in_polygon() const {
+            int k = std::min(int(random_double() * blades), blades - 1);
+            double a0 = degrees_to_radians(blade_rotation) + 2 * pi * k / blades;
+            double a1 = a0 + 2 * pi / blades;
+            double s = random_double(), t = random_double();
+            if (s + t > 1) {
+                s = 1 - s;
+                t = 1 - t;
+            }
+            return s * vec3(std::cos(a0), std::sin(a0), 0) + t * vec3(std::cos(a1), std::sin(a1), 0);
         }
 
         // Power heuristic (beta = 2) weight for a sample drawn from the strategy
@@ -321,6 +360,12 @@ class camera{
             bool specular = true;  // Camera rays and specular bounces see lights unweighted
             double scatter_pdf = 0;  // Density the current ray's direction was sampled with
             point3 prev_point;       // Where the current ray started
+            int diffuse_count = 0, specular_count = 0, scatter_count = 0;
+            // With transparent_shadows, light reached through smooth glass
+            // from the last non-specular vertex was already counted by its
+            // shadow ray; a path that then refracts through glass to that
+            // light must not count it again
+            bool seen_by_shadow_ray = false;
 
             for (int depth = 0; depth < max_depth; depth++) {
                 hit_record rec;
@@ -329,11 +374,14 @@ class camera{
                     // The sky is a light too: weighted against light sampling
                     // like emission. A constant background is not in lights,
                     // so its light pdf is 0 and the weight comes out as 1.
+                    color sky = escaped_radiance(r.direction(), depth == 0);
+                    if (seen_by_shadow_ray)
+                        break;
                     if (specular || lights.empty()) {
-                        radiance += beta * background_color(r);
+                        radiance += beta * sky;
                     } else {
                         auto light_pdf = lights.pdf_value(prev_point, r.direction());
-                        radiance += beta * background_color(r) * power_heuristic(scatter_pdf, light_pdf);
+                        radiance += beta * sky * power_heuristic(scatter_pdf, light_pdf);
                     }
                     break;
                 }
@@ -349,7 +397,7 @@ class camera{
 
                 // Emission found by BSDF sampling, weighted against light sampling
                 color emission = rec.mat->emitted(r, rec);
-                if (emission.x() > 0 || emission.y() > 0 || emission.z() > 0) {
+                if (!seen_by_shadow_ray && (emission.x() > 0 || emission.y() > 0 || emission.z() > 0)) {
                     if (specular || lights.empty()) {
                         radiance += beta * emission;
                     } else {
@@ -363,15 +411,30 @@ class camera{
                     break;
 
                 if (srec.skip_pdf) {
+                    if (max_specular > 0 && ++specular_count > max_specular)
+                        break;
                     beta = beta * srec.attenuation;
                     r = srec.skip_pdf_ray;
+                    // After a non-specular vertex (not from the camera), a
+                    // chain through glass ends where its shadow ray went
+                    if (transparent_shadows && rec.mat->lets_shadows_through() && !lights.empty()
+                        && depth > 0 && !specular)
+                        seen_by_shadow_ray = true;
                     specular = true;
                 } else {
                     // On the last bounce no BSDF ray follows to find the light,
-                    // so the light sample takes the whole contribution
-                    bool last_bounce = depth == max_depth - 1;
+                    // so the light sample takes the whole contribution. A
+                    // bounce cap reached makes this the last bounce too.
+                    bool volume = rec.mat->is_volume();
+                    int& count = volume ? scatter_count : diffuse_count;
+                    int cap = volume ? max_scatter : max_diffuse;
+                    bool capped = cap > 0 && ++count >= cap;
+                    bool last_bounce = depth == max_depth - 1 || capped;
+                    seen_by_shadow_ray = false;
                     if (!lights.empty())
                         radiance += beta * sample_light(r, rec, *srec.pdf_ptr, world, lights, last_bounce);
+                    if (capped)
+                        break;
 
                     vec3 direction = srec.pdf_ptr->generate();
                     scatter_pdf = srec.pdf_ptr->value(direction);
@@ -421,25 +484,48 @@ class camera{
             ray shadow(rec.p, unit_vector(to_light));
             hit_record light_rec;
             color emission;
-            if (world.hit(shadow, interval(0.001, infinity), light_rec))
+            color through(1, 1, 1);  // What smooth glass on the way lets through
+            for (int k = 0; ; k++) {
+                if (!world.hit(shadow, interval(0.001, infinity), light_rec)) {
+                    emission = escaped_radiance(to_light, false);  // Reached the sky or the sun
+                    break;
+                }
+                // With transparent shadows, go on through smooth glass in a
+                // straight line, keeping what its absorption lets through
+                if (transparent_shadows && k < 16 && light_rec.mat->lets_shadows_through()) {
+                    through = through * light_rec.mat->interior_transmittance(shadow, light_rec);
+                    shadow = ray(light_rec.p, shadow.direction());
+                    continue;
+                }
                 emission = light_rec.mat->emitted(shadow, light_rec);
-            else if (environment)
-                emission = environment->radiance(to_light);  // Reached the sky
-            else
-                return color(0, 0, 0);
+                break;
+            }
+            emission = through * emission;
             auto weight = last_bounce ? 1.0 : power_heuristic(light_pdf, bsdf_pdf.value(to_light));
             return f * emission * (weight / light_pdf);
         }
 
-        // Radiance arriving from a direction that hits nothing.
-        color background_color(const ray& r) const {
-            if (environment)
-                return environment->radiance(r.direction());
-            if (!use_sky)
-                return background;
-            vec3 unit_direction = unit_vector(r.direction());
-            auto a = 0.5*(unit_direction.y() + 1.0);
-            return (1.0 - a) * color(1.0, 1.0, 1.0) + a*color(0.5, 0.7, 1.0);
+        // Radiance arriving from a direction that hits nothing: the sky (an
+        // environment map, the gradient or a constant) plus the sun.
+        //
+        // Shadow rays count all of it, even the parts that aren't in lights
+        // (the gradient, a constant background): the BSDF ray that escapes
+        // the same way is weighted with the same light density, so the two
+        // weights still add up to 1 wherever light sampling can go.
+        color escaped_radiance(const vec3& direction, bool camera_ray) const {
+            color sky;
+            if (environment) {
+                sky = environment->radiance(direction);
+            } else if (!use_sky) {
+                sky = background;
+            } else {
+                vec3 unit_direction = unit_vector(direction);
+                auto a = 0.5*(unit_direction.y() + 1.0);
+                sky = (1.0 - a) * color(1.0, 1.0, 1.0) + a*color(0.5, 0.7, 1.0);
+            }
+            if (sun && (sun_disk_visible || !camera_ray))
+                sky += sun->radiance(direction);
+            return sky;
         }
 };
 

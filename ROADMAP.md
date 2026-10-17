@@ -1,6 +1,6 @@
 # mypbr roadmap
 
-Where the renderer is today: milestones 1 to 12 are done (renders in `renders/NN-*.png`). It is a multithreaded CPU path tracer with NEE + MIS, GGX microfacets with energy compensation, a SAH BVH, OBJ/MTL meshes, HDRI lighting, fog, normal maps and an à-trous denoiser. `CLAUDE.md` describes the code.
+Where the renderer is today: milestones 1 to 13 are done (renders in `renders/NN-*.png`). It is a multithreaded CPU path tracer with NEE + MIS, GGX microfacets with energy compensation, a SAH BVH, OBJ/MTL meshes, HDRI lighting, fog, normal maps and an à-trous denoiser. `CLAUDE.md` describes the code.
 
 The plan started from Ray Tracing in One Weekend chapter 6 (spheres, a `camera` class, normal shading, PPM to stdout).
 
@@ -132,6 +132,20 @@ Do this when renders start taking minutes, probably around milestone 6.
 - ✓ Light selection in proportion to power (20% kept uniform).
 
 Known gaps: grey-scale bump (height) maps are skipped, rough glass is not energy-compensated, the denoiser's normal guide ignores normal maps.
+
+## 13. MagicaVoxel look (done 2026-10-17)
+
+From the analysis "Making mypbr look like MagicaVoxel": the look comes from flat-colored cubes, one soft sun plus a sky, a ground fading into the horizon, ACES, bloom and a shallow depth of field.
+
+- ✓ `.vox` loader (models, palette, MATL materials, scene graph), first as quads in the BVH (`vox ... quads`).
+- ✓ Sun (`sun`), uniform sky (`sky uniform`), infinite ground (`ground`).
+- ✓ Bloom, vignette and polygonal bokeh (`bloom`, `vignette`, `camera blades`).
+- ✓ Voxel grid traced with a 3D DDA in 8³ blocks, checked against the quads by `voxel_test`.
+- ✓ Physically based sky: single-scattering Rayleigh + Mie + ozone (`sky atmosphere`).
+- ✓ Orthographic camera, height fog, MagicaVoxel's bounce caps, transparent shadows, voxel outlines.
+- ✓ `style voxel` preset (and `style classic`).
+
+Renders: `renders/13-*.png`. Not done: rOBJ/rCAM import (a .vox file's own render settings and camera), cloud/media voxels, multiple scattering in the sky.
 
 ## Next ideas
 

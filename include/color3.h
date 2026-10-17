@@ -22,6 +22,13 @@ inline double linear_to_srgb(double linear_component) {
     return 1.055 * std::pow(linear_component, 1.0/2.4) - 0.055;
 }
 
+// The inverse curve: sRGB-encoded value in [0, 1] to linear light.
+inline double srgb_to_linear(double encoded) {
+    if (encoded <= 0.04045)
+        return encoded / 12.92;
+    return std::pow((encoded + 0.055) / 1.055, 2.4);
+}
+
 // Converts a linear [0,1] component to an sRGB-encoded byte.
 inline unsigned char to_byte(double linear_component) {
     static const interval intensity(0.000, 0.999);

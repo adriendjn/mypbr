@@ -1,0 +1,17 @@
+# ephtracy's "monu1" MagicaVoxel sample (MIT license), a 126^3 castle.
+# Run tools/fetch_models.sh first.
+
+image_width  600
+aspect_ratio 1
+samples_per_pixel 128
+max_depth    16
+
+camera lookfrom 150 120 150  lookat 0 40 0  vfov 40
+tonemap aces
+
+sun elevation 35 azimuth 70 intensity 3 angle 4
+sky uniform 0.35 0.45 0.65
+material ground lambertian 0.3 0.3 0.3
+ground ground
+
+vox ../models/external/monu1.vox

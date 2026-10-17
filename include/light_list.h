@@ -3,6 +3,7 @@
 
 #include "environment.h"
 #include "hittable_list.h"
+#include "sun.h"
 
 #include <algorithm>
 #include <cmath>
@@ -62,7 +63,8 @@ class light_list : public hittable_list{
                 int known = 0;
                 for (size_t k = 0; k < n; k++) {
                     auto sky = std::dynamic_pointer_cast<environment_light>(objects[k]);
-                    power[k] = sky ? sky->power(radius) : objects[k]->power();
+                    auto sun = std::dynamic_pointer_cast<sun_light>(objects[k]);
+                    power[k] = sky ? sky->power(radius) : sun ? sun->power(radius) : objects[k]->power();
                     if (std::isfinite(power[k]) && power[k] > 0) {
                         known_sum += power[k];
                         known++;
