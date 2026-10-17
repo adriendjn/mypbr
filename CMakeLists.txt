@@ -29,7 +29,7 @@ endif()
 
 # Sanity tests: run with "ctest --test-dir build"
 enable_testing()
-foreach(test furnace_test pdf_test)
+foreach(test furnace_test pdf_test denoise_test)
     add_executable(${test} tests/${test}.cpp)
     target_include_directories(${test} PRIVATE include)
     target_link_libraries(${test} PRIVATE stb Threads::Threads)

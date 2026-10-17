@@ -3,6 +3,7 @@
 
 #include "hittable.h"
 #include "color3.h"
+#include "denoiser.h"
 #include "environment.h"
 #include "hittable_list.h"
 #include "material.h"
@@ -36,46 +37,62 @@ class camera{
 
         int    threads = 0;  // Worker threads; 0 uses every hardware thread
 
+        bool   collect_features = false;  // Also fill albedo, normal and variance for the denoiser
+
         int height() const { return image_height; }
 
+        // Per-pixel sums over the samples taken so far.
+        class accumulator{
+            public:
+                std::vector<color>  radiance, albedo, normal;
+                std::vector<double> luminance_squared;  // For the variance
+        };
+
         // Called during a progressive render with the number of samples per
-        // pixel done so far and the image averaged over them.
-        using pass_callback = std::function<void(int, const std::vector<color>&)>;
+        // pixel done so far and the frame averaged over them.
+        using pass_callback = std::function<void(int, const frame&)>;
 
         // Renders the world and returns the linear radiance of every pixel,
-        // row by row from the top left. lights are the emitters to sample
-        // directly (next event estimation); they must also be part of world.
+        // row by row from the top left, plus the denoiser's guides with
+        // collect_features. lights are the emitters to sample directly (next
+        // event estimation); they must also be part of world.
         //
         // Rendering is progressive: each pass adds one sample to every pixel.
         // If save_every > 0, on_pass is called every save_every passes so a
         // long render can be stopped early with a usable image.
-        std::vector<color> render(const hittable& world, const hittable_list& lights,
-                                  int save_every = 0, const pass_callback& on_pass = nullptr) {
+        frame render(const hittable& world, const hittable_list& lights,
+                     int save_every = 0, const pass_callback& on_pass = nullptr) {
             initialize();
 
             size_t pixel_count = size_t(image_width) * image_height;
-            std::vector<color> sum(pixel_count);
+            accumulator acc;
+            acc.radiance.resize(pixel_count);
+            if (collect_features) {
+                acc.albedo.resize(pixel_count);
+                acc.normal.resize(pixel_count);
+                acc.luminance_squared.resize(pixel_count);
+            }
 
             int worker_count = threads > 0 ? threads : int(std::thread::hardware_concurrency());
             worker_count = std::max(worker_count, 1);
 
             for (int pass = 0; pass < samples_per_pixel; pass++) {
                 std::clog << "\rPass " << (pass + 1) << '/' << samples_per_pixel << ' ' << std::flush;
-                render_pass(pass, worker_count, world, lights, sum);
+                render_pass(pass, worker_count, world, lights, acc);
 
                 int done = pass + 1;
                 if (on_pass && save_every > 0 && done % save_every == 0 && done < samples_per_pixel)
-                    on_pass(done, average(sum, done));
+                    on_pass(done, average(acc, done));
             }
             std::clog << "\rDone.                   \n";
-            return average(sum, samples_per_pixel);
+            return average(acc, samples_per_pixel);
         }
 
-        // Adds one sample to every pixel of sum. The image is cut into square
+        // Adds one sample to every pixel of acc. The image is cut into square
         // tiles that worker threads claim from a shared atomic counter; each
         // pixel belongs to one tile, so workers never write the same pixel.
         void render_pass(int pass, int worker_count, const hittable& world, const hittable_list& lights,
-                         std::vector<color>& sum) const {
+                         accumulator& acc) const {
             const int tile_size = 16;
             int tiles_x = (image_width + tile_size - 1) / tile_size;
             int tiles_y = (image_height + tile_size - 1) / tile_size;
@@ -93,7 +110,7 @@ class camera{
                     int j1 = std::min(j0 + tile_size, image_height);
                     for (int j = j0; j < j1; j++)
                         for (int i = i0; i < i1; i++)
-                            sum[size_t(j) * image_width + i] += render_sample(i, j, pass, world, lights);
+                            render_sample(i, j, pass, world, lights, acc);
                 }
             };
 
@@ -156,27 +173,89 @@ class camera{
         vec3   defocus_disk_u; // Defocus disk horizontal radius
         vec3   defocus_disk_v; // Defocus disk vertical radius
 
-        // One radiance sample for pixel i, j. Across the passes, each pixel's
+        // Adds one sample of pixel i, j to acc. Across the passes, each pixel's
         // first sqrt_spp^2 samples visit every cell of a sqrt_spp x sqrt_spp grid
         // once (jittered within the cell); the cell order is offset per pixel
         // so partial images aren't biased toward one corner. Any remaining
         // samples are placed uniformly at random.
-        color render_sample(int i, int j, int pass, const hittable& world, const hittable_list& lights) const {
+        void render_sample(int i, int j, int pass, const hittable& world, const hittable_list& lights,
+                           accumulator& acc) const {
             int strata = sqrt_spp * sqrt_spp;
-            if (pass >= strata)
-                return sample_radiance(get_ray(i, j, sample_square()), world, lights);
+            vec3 offset;
+            if (pass >= strata) {
+                offset = sample_square();
+            } else {
+                int cell = (pass + i * 7919 + j * 104729) % strata;
+                offset = sample_square_stratified(cell % sqrt_spp, cell / sqrt_spp);
+            }
+            ray r = get_ray(i, j, offset);
 
-            int cell = (pass + i * 7919 + j * 104729) % strata;
-            auto offset = sample_square_stratified(cell % sqrt_spp, cell / sqrt_spp);
-            return sample_radiance(get_ray(i, j, offset), world, lights);
+            size_t k = size_t(j) * image_width + i;
+            color c = sample_radiance(r, world, lights);
+            acc.radiance[k] += c;
+            if (collect_features) {
+                color albedo, normal;
+                first_surface(r, world, albedo, normal);
+                acc.albedo[k] += albedo;
+                acc.normal[k] += normal;
+                double l = luminance(c);
+                acc.luminance_squared[k] += l * l;
+            }
         }
 
-        static std::vector<color> average(const std::vector<color>& sum, int samples) {
-            std::vector<color> image(sum.size());
+        frame average(const accumulator& acc, int samples) const {
+            frame f;
             double scale = 1.0 / samples;
-            for (size_t k = 0; k < sum.size(); k++)
-                image[k] = scale * sum[k];
-            return image;
+            size_t n = acc.radiance.size();
+            f.radiance.resize(n);
+            for (size_t k = 0; k < n; k++)
+                f.radiance[k] = scale * acc.radiance[k];
+            if (!collect_features)
+                return f;
+
+            f.albedo.resize(n);
+            f.normal.resize(n);
+            f.variance.resize(n);
+            for (size_t k = 0; k < n; k++) {
+                f.albedo[k] = scale * acc.albedo[k];
+                f.normal[k] = scale * acc.normal[k];
+                // Spread of the samples, E[l^2] - E[l]^2, made unbiased by
+                // n / (n - 1), then over n for the variance of their mean
+                double mean = luminance(f.radiance[k]);
+                double spread = std::fmax(scale * acc.luminance_squared[k] - mean * mean, 0.0);
+                f.variance[k] = samples > 1 ? spread / (samples - 1) : spread;
+            }
+            return f;
+        }
+
+        // The denoiser's guides for a camera ray: the albedo and normal of the
+        // first surface that isn't a perfect mirror or smooth glass. Through
+        // those the ray follows the specular bounce, as the path does, tinting
+        // the albedo, so reflections and refractions keep their own edges.
+        // Rays that escape see albedo 1 and normal 0.
+        void first_surface(const ray& camera_ray, const hittable& world, color& albedo, color& normal) const {
+            ray r = camera_ray;
+            color tint(1, 1, 1);
+            for (int bounce = 0; bounce < 8; bounce++) {
+                hit_record rec;
+                if (!world.hit(r, interval(0.001, infinity), rec))
+                    break;
+                scatter_record srec;
+                if (!rec.mat->scatter(r, rec, srec)) {
+                    albedo = tint;  // A light: the radiance alone tells it apart
+                    normal = rec.normal;
+                    return;
+                }
+                if (!srec.skip_pdf) {
+                    albedo = tint * srec.attenuation;
+                    normal = rec.normal;
+                    return;
+                }
+                tint = tint * srec.attenuation;
+                r = srec.skip_pdf_ray;
+            }
+            albedo = tint;
+            normal = color(0, 0, 0);
         }
 
         // One path's radiance, with NaN or infinite estimates dropped (counted

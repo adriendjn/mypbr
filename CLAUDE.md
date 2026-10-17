@@ -8,8 +8,8 @@ Roadmap and history: `ROADMAP.md`. Milestone renders: `renders/NN-name.png`.
 
 ```sh
 cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build   # must stay warning-free (-Wall -Wextra)
-ctest --test-dir build                                             # furnace_test, pdf_test
-./build/mypbr scenes/cornell.scene -o out.png [-o out.hdr] [--save-every N] [--threads N]
+ctest --test-dir build                                             # furnace_test, pdf_test, denoise_test
+./build/mypbr scenes/cornell.scene -o out.png [-o out.hdr] [--save-every N] [--threads N] [--denoise [--noisy raw.png]]
 tools/fetch_models.sh   # bunny + Sponza into models/external/ (gitignored), needed by bunny_cornell / sponza scenes
 ```
 
@@ -25,6 +25,7 @@ the only other translation unit (stb, compiled as a SYSTEM library).
 |---|---|
 | `scene.h` | `scene` struct and `load_scene()`. **The scene file format is documented in the comment at the top.** |
 | `camera.h` | Camera setup, tiled multithreaded progressive render, and the integrator (`ray_color`, `sample_light`). |
+| `denoiser.h` | `frame` (radiance + albedo/normal/variance guides) and `denoiser`: firefly clamp, then SVGF-style edge-avoiding à-trous filter on radiance / albedo. |
 | `material.h` | `material` interface; `lambertian`, `metal`, `dielectric`, `principled`, `diffuse_light`. |
 | `microfacet.h` | GGX distribution + Smith G, Fresnel, VNDF reflection sampling, rough dielectric BSDF. |
 | `environment.h` | `environment_light`: equirectangular HDR sky, importance sampled with a 2D CDF; lives in `lights` and `camera::environment`. |
@@ -49,6 +50,9 @@ specular), then either follows a delta ray (`srec.skip_pdf`) or does NEE via
 `sample_light` and samples the BSDF pdf. `beta *= eval / pdf`. Russian roulette from
 depth 3. NaN/inf samples are dropped. Output: `.png`/`.ppm` get exposure + tonemap +
 sRGB; `.hdr`/`.pfm` keep raw linear radiance.
+With `--denoise`, `camera::collect_features` also traces each camera ray to its first
+non-delta surface (`first_surface`) for albedo and normal, and sums luminance² for the
+variance; `main` runs `denoiser::run` on the `frame` before every save.
 
 ## Conventions
 
