@@ -8,7 +8,9 @@ Roadmap and history: `ROADMAP.md`. Milestone renders: `renders/NN-name.png`.
 
 Milestones 1-10 of `ROADMAP.md` are done, plus 11 (HDRI environment, MTL textures and
 alpha masks, fog, denoiser) and 12 (normal maps, textured roughness/metallic, colored
-glass, Kulla-Conty compensation, power-based light selection). Known gaps: grey-scale
+glass, Kulla-Conty compensation, power-based light selection) and 13 (MagicaVoxel look:
+.vox loader, DDA voxel grid, sun, atmospheric sky, ground, bloom/vignette/bokeh, ortho
+camera, height fog, `style voxel` preset). Known gaps: grey-scale
 bump/height maps are skipped with a warning, rough glass is not energy-compensated,
 the denoiser's normal guide ignores normal maps. The BSDFs, area lights and HDRI are
 validated against Mitsuba 3 (`tools/mitsuba/`, results in its README).
@@ -17,9 +19,9 @@ validated against Mitsuba 3 (`tools/mitsuba/`, results in its README).
 
 ```sh
 cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build   # must stay warning-free (-Wall -Wextra)
-ctest --test-dir build                                             # furnace_test, pdf_test, denoise_test
+ctest --test-dir build                                             # furnace_test, pdf_test, denoise_test, voxel_test
 ./build/mypbr scenes/cornell.scene -o out.png [-o out.hdr] [--save-every N] [--threads N] [--denoise [--noisy raw.png]]
-tools/fetch_models.sh   # bunny + Sponza into models/external/ (gitignored), needed by bunny_cornell / sponza scenes
+tools/fetch_models.sh   # bunny, Sponza, .vox samples into models/external/ (gitignored), needed by bunny_cornell / sponza / vox_* scenes
 python3 tools/mitsuba/validate.py [case...]   # compare with Mitsuba 3 (pip install mitsuba flip-evaluator numpy pillow)
 ```
 
@@ -49,18 +51,27 @@ the only other translation unit (stb, compiled as a SYSTEM library).
 | `obj_loader.h` | Minimal OBJ reader (v/vn/vt/f, fan triangulation, `usemtl`) and MTL reader (`Kd`/`map_Kd`, `Ks`/`Ns` → principled, `Ke`, alpha masks). |
 | `texture.h` | `solid_color`, `checker_texture`, `image_texture` (8-bit kept as bytes, decoded from sRGB on lookup; clamp or repeat; alpha). |
 | `tonemap.h`, `image_io.h`, `color3.h` | Exposure + none/reinhard/aces, sRGB curve, PNG/PPM/HDR/PFM writers. |
+| `postprocess.h` | Bloom (threshold + blur pyramid) and vignette, on display images only (`display_settings::post`). |
+| `vox_loader.h` | MagicaVoxel `.vox` reader: models, palette, MATL, nTRN/nGRP/nSHP scene graph (still z-up). |
+| `voxel.h` | `voxel_palette` (MATL → materials, `voxel_kind`), `voxel_model_faces` (quads, reference), `voxel_grid` (3D DDA over a block) and `voxel_blocks` (8³ blocks in a BVH). |
+| `sun.h` | `sun_light`: distant cone light given by irradiance; in `lights` and `camera::sun`, never in `world`. |
+| `atmosphere.h` | Single-scattering Rayleigh/Mie/ozone sky, baked into an `environment_light`; also reddens the sun. |
+| `plane.h` | `ground_plane`: infinite plane, kept in `scene::unbounded` (beside the BVH). |
 | `vec3.h`, `ray.h`, `interval.h`, `onb.h`, `rtweekend.h` | Math, `random_double()`, constants. |
 
 ## How a render flows
 
 `camera::render` runs `samples_per_pixel` passes; each pass adds one sample per
 pixel, with 16×16 tiles claimed by worker threads from an atomic counter. The first
-`floor(sqrt(spp))²` passes are stratified. `ray_color` is iterative: at each hit it
+`floor(sqrt(spp))²` passes are stratified. `main` tests `scene::unbounded` (ground, height fog)
+beside the BVH. `ray_color` is iterative: at each hit it
 adds emission (MIS-weighted against light sampling unless the previous bounce was
 specular), then either follows a delta ray (`srec.skip_pdf`) or does NEE via
 `sample_light` and samples the BSDF pdf. `beta *= eval / pdf`. Russian roulette from
-depth 3. NaN/inf samples are dropped. Output: `.png`/`.ppm` get exposure + tonemap +
-sRGB; `.hdr`/`.pfm` keep raw linear radiance.
+depth 3, and the optional per-kind caps (`bounces`). Rays that escape see
+`escaped_radiance` (environment or gradient or background, plus the sun). NaN/inf samples
+are dropped. Output: `.png`/`.ppm` get bloom + vignette + exposure + tonemap + sRGB;
+`.hdr`/`.pfm` keep raw linear radiance.
 With `--denoise`, `camera::collect_features` also traces each camera ray to its first
 non-delta surface (`first_surface`) for albedo and normal, and sums luminance² for the
 variance; `main` runs `denoiser::run` on the `frame` before every save.
@@ -98,6 +109,18 @@ variance; `main` runs `denoiser::run` on the `frame` before every save.
   owning object keeps the material alive.
 - `instance::hit` does not renormalize the ray direction so `t` matches in both spaces.
 - `random_double()` uses a `thread_local` mt19937: safe from workers, not reproducible.
+- Voxel surfaces exist only between cells of different `voxel_kind` (opaque, transparent glass,
+  empty): adjacent glass voxels are one volume. `voxel_grid` blocks read neighbours from the
+  whole model, so a boundary surface is found by both blocks at the same t. Change the rules
+  in `voxel_face_visible` only, and keep `voxel_test` passing (grid = quads).
+- Emissive voxels are lights through their faces as quads in `lights` (the grid itself is hit):
+  like `mesh::pdf_value`, cost is linear in emissive face count.
+- `.vox` files are z-up; `vox` turns them with rotate_x -90 before the line's own transforms.
+- `transparent_shadows` and `bounces` are deliberate biases (MagicaVoxel's look): off unless
+  set or `style voxel`. With transparent shadows, a path refracted through smooth glass after a
+  non-specular vertex drops the emission it reaches, since that vertex's shadow ray counted it.
+- `sky atmosphere` uses the sun's settings even with `sun off`, and its `intensity` defaults to 3
+  (single scattering alone is about 3x too dark).
 - Media need no integrator code: `constant_medium::hit` returns a random scatter point, so a
   shadow ray stopped by fog counts as blocked (unbiased transmittance). Transform a medium's
   boundary, never the medium, or its density changes with the instance's scale.
