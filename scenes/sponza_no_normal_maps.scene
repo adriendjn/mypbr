@@ -1,0 +1,19 @@
+# scenes/sponza.scene with its normal maps (map_Disp *_ddn.tga in sponza.mtl)
+# ignored, to compare: renders/12-sponza-no-normal-maps.png against
+# renders/12-sponza-normal-maps.png. Keep the rest identical to sponza.scene.
+
+image_width  640
+aspect_ratio 16/9
+samples_per_pixel 128
+max_depth    16
+tonemap      aces
+exposure     0
+
+camera lookfrom 1000 260 -30  lookat -800 480 30  vup 0 1 0  vfov 70
+
+material stone lambertian 0.6 0.58 0.55
+material sun   emissive 1500 1400 1250
+
+normal_maps off
+sphere -2500 10000 -900  500  sun
+mesh ../models/external/sponza.obj stone
