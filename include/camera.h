@@ -326,8 +326,10 @@ class camera{
 
             // The shadow ray sees the light only if nothing else is closer.
             // Whatever it reaches counts, whichever light was sampled: light_pdf
-            // is the density of the whole list, so this stays unbiased.
-            ray shadow(rec.p, to_light);
+            // is the density of the whole list, so this stays unbiased. Its
+            // direction is normalized so the 0.001 offset is a distance: to_light
+            // reaches the light, and would make it skip a whole unit of the scene.
+            ray shadow(rec.p, unit_vector(to_light));
             hit_record light_rec;
             color emission;
             if (world.hit(shadow, interval(0.001, infinity), light_rec))

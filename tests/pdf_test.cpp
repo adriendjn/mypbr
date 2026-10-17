@@ -110,6 +110,17 @@ int main() {
     ok &= check("mixture_pdf integral", integral(mix), 1.0, 0.02);
     ok &= check("mixture_pdf sampling", cap_solid_angle(mix, vec3(0, 1, 0), 0.0), 2 * pi, 0.05);
 
+    vec3 forward = unit_vector(vec3(1, 2, -0.5));
+    for (double g : {0.0, 0.5, -0.7, 0.9}) {
+        auto name = "Henyey-Greenstein g " + std::to_string(g).substr(0, g < 0 ? 4 : 3);
+        henyey_greenstein_pdf hg(forward, g);
+        ok &= check(name + " integral", integral_defensive(hg), 1.0, 0.02);
+        // Check the hemisphere the lobe favors: rarely sampled directions have
+        // a tiny pdf, and their 1/pdf terms would make the estimate noisy
+        vec3 lobe = g < 0 ? -forward : forward;
+        ok &= check(name + " sampling", cap_solid_angle(hg, lobe, 0.0), 2 * pi, 0.05);
+    }
+
     // A dim sky with a small, very bright sun: the sampler should send most
     // directions at the sun, and value() must still integrate to one.
     const int sky_w = 64, sky_h = 32;

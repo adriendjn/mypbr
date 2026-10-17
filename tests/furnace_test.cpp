@@ -10,6 +10,7 @@
 #include <camera.h>
 #include <hittable_list.h>
 #include <material.h>
+#include <medium.h>
 #include <sphere.h>
 
 #include <cmath>
@@ -22,10 +23,10 @@
 //
 // With use_environment, the white background is a constant environment map in
 // the lights, so the sphere is lit through next event estimation + MIS as well.
-static void render_furnace(std::shared_ptr<material> mat, double& mean, double& worst,
+static void render_furnace(std::shared_ptr<hittable> object, double& mean, double& worst,
                            bool use_environment = false) {
     hittable_list world, lights;
-    world.add(std::make_shared<sphere>(point3(0, 0, -1), 0.5, mat));
+    world.add(object);
 
     camera cam;
     cam.image_width = 32;
@@ -53,11 +54,15 @@ static void render_furnace(std::shared_ptr<material> mat, double& mean, double& 
     mean = sum / (3.0 * pixels.size());
 }
 
-// Energy conserving: the sphere must vanish.
-static bool furnace(const std::string& name, std::shared_ptr<material> mat, double tolerance,
+static std::shared_ptr<hittable> furnace_sphere(std::shared_ptr<material> mat) {
+    return std::make_shared<sphere>(point3(0, 0, -1), 0.5, mat);
+}
+
+// Energy conserving: the object must vanish.
+static bool furnace(const std::string& name, std::shared_ptr<hittable> object, double tolerance,
                     bool use_environment = false) {
     double mean, worst;
-    render_furnace(mat, mean, worst, use_environment);
+    render_furnace(object, mean, worst, use_environment);
     bool ok = std::fabs(mean - 1) < tolerance && worst < 4 * tolerance;
     std::cout << (ok ? "PASS " : "FAIL ") << name << ": mean " << mean
               << ", worst pixel off by " << worst << '\n';
@@ -68,7 +73,7 @@ static bool furnace(const std::string& name, std::shared_ptr<material> mat, doub
 // sphere is, but never brighter on average.
 static bool bounded(const std::string& name, std::shared_ptr<material> mat) {
     double mean, worst;
-    render_furnace(mat, mean, worst);
+    render_furnace(furnace_sphere(mat), mean, worst);
     bool ok = mean <= 1.005 && mean > 0.5;
     std::cout << (ok ? "PASS " : "FAIL ") << name << ": mean " << mean << " (bounded)\n";
     return ok;
@@ -78,12 +83,23 @@ int main() {
     std::clog.setstate(std::ios::failbit);  // Silence render progress
 
     bool ok = true;
-    ok &= furnace("white lambertian", std::make_shared<lambertian>(color(1, 1, 1)), 1e-6);
-    ok &= furnace("perfect mirror", std::make_shared<metal>(color(1, 1, 1), 0.0), 1e-6);
-    ok &= furnace("clear glass", std::make_shared<dielectric>(1.5), 0.02);
+    ok &= furnace("white lambertian", furnace_sphere(std::make_shared<lambertian>(color(1, 1, 1))), 1e-6);
+    ok &= furnace("perfect mirror", furnace_sphere(std::make_shared<metal>(color(1, 1, 1), 0.0)), 1e-6);
+    ok &= furnace("clear glass", furnace_sphere(std::make_shared<dielectric>(1.5)), 0.02);
     // Light sampling makes this one noisy (not exact like pure BSDF sampling
     // of a constant sky), so the tolerance is looser
-    ok &= furnace("white lambertian, environment map", std::make_shared<lambertian>(color(1, 1, 1)), 0.02, true);
+    ok &= furnace("white lambertian, environment map",
+                  furnace_sphere(std::make_shared<lambertian>(color(1, 1, 1))), 0.02, true);
+
+    // A non-absorbing medium only redirects light, so it must vanish too. Paths
+    // scatter many times inside it, so Russian roulette adds more per-pixel noise
+    // than for one surface bounce: hence the looser tolerance.
+    for (double g : {0.0, 0.7}) {
+        auto boundary = std::make_shared<sphere>(point3(0, 0, -1), 0.5, nullptr);
+        auto phase = std::make_shared<phase_material>(color(1, 1, 1), g);
+        ok &= furnace("white medium, g " + std::to_string(g).substr(0, 3),
+                      std::make_shared<constant_medium>(boundary, 2.0, phase), 0.03);
+    }
 
     auto white = std::make_shared<solid_color>(color(1, 1, 1));
     for (double roughness : {0.1, 0.5, 1.0}) {

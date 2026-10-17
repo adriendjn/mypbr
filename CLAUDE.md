@@ -28,6 +28,7 @@ the only other translation unit (stb, compiled as a SYSTEM library).
 | `material.h` | `material` interface; `lambertian`, `metal`, `dielectric`, `principled`, `diffuse_light`. |
 | `microfacet.h` | GGX distribution + Smith G, Fresnel, VNDF reflection sampling, rough dielectric BSDF. |
 | `environment.h` | `environment_light`: equirectangular HDR sky, importance sampled with a 2D CDF; lives in `lights` and `camera::environment`. |
+| `medium.h` | `constant_medium` (homogeneous fog in a convex boundary, free-flight sampling in `hit`) and `phase_material` (Henyey-Greenstein). |
 | `pdf.h` | Direction densities: `cosine_pdf`, `hittable_pdf` (light sampling), `mixture_pdf`. |
 | `hittable.h`, `hittable_list.h` | `hit_record`, `hittable` interface (incl. `pdf_value`/`random` for lights). |
 | `sphere.h`, `quad.h` (+ `box()`), `mesh.h` (`triangle`, `mesh`) | Geometry. |
@@ -74,6 +75,9 @@ sRGB; `.hdr`/`.pfm` keep raw linear radiance.
   owning object keeps the material alive.
 - `instance::hit` does not renormalize the ray direction so `t` matches in both spaces.
 - `random_double()` uses a `thread_local` mt19937: safe from workers, not reproducible.
+- Media need no integrator code: `constant_medium::hit` returns a random scatter point, so a
+  shadow ray stopped by fog counts as blocked (unbiased transmittance). Transform a medium's
+  boundary, never the medium, or its density changes with the instance's scale.
 - The environment is in `lights` but never in `world`: rays that miss see it, and `sample_light` counts a
   shadow ray that reaches the sky. Its sampling density is per pixel (piecewise constant), its lookup bilinear.
 - `mesh::pdf_value` is linear in triangle count: fine for small emissive meshes only.
