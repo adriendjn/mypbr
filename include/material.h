@@ -47,6 +47,10 @@ class material{
             (void)r_in; (void)rec;
             return color(0, 0, 0);
         }
+
+        // Radiance leaving the front face, averaged over the surface. Only an
+        // estimate, used to pick lights in proportion to their power.
+        virtual color average_emission() const { return color(0, 0, 0); }
 };
 
 class lambertian : public material{
@@ -265,6 +269,8 @@ class diffuse_light : public material{
                 return color(0, 0, 0);
             return emit;
         }
+
+        color average_emission() const override { return emit; }
 
     private:
         color emit;

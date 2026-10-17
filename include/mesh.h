@@ -133,6 +133,9 @@ class triangle : public hittable{
             return p - origin;
         }
 
+        // pi * area * L; an alpha mask's holes are ignored (it is only an estimate).
+        double power() const override { return mat ? pi * area * luminance(mat->average_emission()) : 0; }
+
     private:
         const mesh_data* data;
         int vi[3], ni[3], ti[3];
@@ -185,6 +188,13 @@ class mesh : public hittable{
             auto it = std::upper_bound(area_cdf.begin(), area_cdf.end(), x);
             size_t index = std::min(size_t(it - area_cdf.begin()), triangles.size() - 1);
             return triangles[index]->random(origin);
+        }
+
+        double power() const override {
+            double sum = 0;
+            for (const auto& tri : triangles)
+                sum += tri->power();
+            return sum;
         }
 
     private:

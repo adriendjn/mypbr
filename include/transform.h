@@ -79,6 +79,17 @@ class transform{
                 && close(dot(c0, c1), 0) && close(dot(c1, c2), 0) && close(dot(c0, c2), 0);
         }
 
+        // Factor by which surface areas grow: s^2 for a similarity of scale s
+        // (lights are always similarities). For other transforms areas grow
+        // by different factors in different directions; |det|^(2/3) is the
+        // factor for a volume's worth of area, a reasonable estimate.
+        double area_scale() const {
+            double det = m[0][0] * (m[1][1]*m[2][2] - m[1][2]*m[2][1])
+                       - m[0][1] * (m[1][0]*m[2][2] - m[1][2]*m[2][0])
+                       + m[0][2] * (m[1][0]*m[2][1] - m[1][1]*m[2][0]);
+            return std::pow(std::fabs(det), 2.0 / 3.0);
+        }
+
     private:
         double m[3][3];
         vec3 t;

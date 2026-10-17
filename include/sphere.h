@@ -81,6 +81,11 @@ class sphere : public hittable{
             return uvw.transform(random_to_sphere(r, distance_squared));
         }
 
+        // pi * area * L. A hollow (negative radius) sphere emits inwards, over the same area.
+        double power() const override {
+            return pi * 4*pi*radius*radius * luminance(mat->average_emission());
+        }
+
     private:
         point3 center;
         double radius;
