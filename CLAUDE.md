@@ -10,8 +10,8 @@ Milestones 1-10 of `ROADMAP.md` are done, plus 11 (HDRI environment, MTL texture
 alpha masks, fog, denoiser) and 12 (normal maps, textured roughness/metallic, colored
 glass, Kulla-Conty compensation, power-based light selection). Known gaps: grey-scale
 bump/height maps are skipped with a warning, rough glass is not energy-compensated,
-the denoiser's normal guide ignores normal maps. Next idea: validate the BSDFs against
-Mitsuba or pbrt renders of the same scenes.
+the denoiser's normal guide ignores normal maps. The BSDFs, area lights and HDRI are
+validated against Mitsuba 3 (`tools/mitsuba/`, results in its README).
 
 ## Build, test, run
 
@@ -20,6 +20,7 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build   # must stay w
 ctest --test-dir build                                             # furnace_test, pdf_test, denoise_test
 ./build/mypbr scenes/cornell.scene -o out.png [-o out.hdr] [--save-every N] [--threads N] [--denoise [--noisy raw.png]]
 tools/fetch_models.sh   # bunny + Sponza into models/external/ (gitignored), needed by bunny_cornell / sponza scenes
+python3 tools/mitsuba/validate.py [case...]   # compare with Mitsuba 3 (pip install mitsuba flip-evaluator numpy pillow)
 ```
 
 `-DMYPBR_NATIVE=OFF` drops `-march=native`. Without `-o`, PPM goes to stdout.

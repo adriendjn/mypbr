@@ -1,0 +1,24 @@
+# HDR environment only (textures/quarry_01_1k.hdr, rotated 100 degrees): a
+# white and a blue diffuse sphere and a mirror on a grey floor, with the sky
+# visible behind them. The mirror and the background check that both
+# renderers map the image to the same directions; the diffuse spheres and
+# their sun shadows check the importance sampling of the map.
+
+image_width  384
+aspect_ratio 2
+samples_per_pixel 512
+max_depth    64
+
+camera lookfrom 0 1.2 5  lookat 0 0.45 0  vfov 40
+
+environment ../../../textures/quarry_01_1k.hdr  rotate 100
+
+material floor  lambertian 0.5 0.5 0.5
+material white  lambertian 0.8 0.8 0.8
+material blue   lambertian 0.15 0.3 0.7
+material mirror metal 0.95 0.95 0.95 0
+
+quad   -6 0 -6  12 0 0  0 0 12  floor
+sphere -1.2 0.5 0  0.5  white
+sphere  0.0 0.5 0  0.5  mirror
+sphere  1.2 0.5 0  0.5  blue

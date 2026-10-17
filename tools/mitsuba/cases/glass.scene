@@ -1,0 +1,29 @@
+# Dielectrics: smooth glass (ior 1.5), rough glass at roughness 0.2 and 0.5,
+# and a smooth high-index sphere (ior 2.4, diamond-like, lots of total
+# internal reflection), on a colored floor under a rectangular light. The
+# caustics under the spheres come from BSDF-sampled paths that hit the light.
+
+image_width  384
+aspect_ratio 2
+samples_per_pixel 1024
+max_depth    64
+background   0.2 0.2 0.2
+
+camera lookfrom 0 2.2 9  lookat 0 0.6 0  vup 0 1 0  vfov 24
+
+material floor  lambertian 0.6 0.5 0.3
+material wall   lambertian 0.2 0.35 0.5
+material lamp   emissive 8 8 8
+material glass  dielectric 1.5
+material rough2 dielectric 1.5 roughness 0.2
+material rough5 dielectric 1.5 roughness 0.5
+material dense  dielectric 2.4
+
+quad -10 0 -10   20 0 0   0 0 20   floor
+quad -10 0 -3    20 0 0   0 6 0    wall
+quad -2 5 -1     4 0 0    0 0 3    lamp
+
+sphere -2.1 0.65 0  0.65  glass
+sphere -0.7 0.65 0  0.65  rough2
+sphere  0.7 0.65 0  0.65  rough5
+sphere  2.1 0.65 0  0.65  dense

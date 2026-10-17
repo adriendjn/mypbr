@@ -1,0 +1,35 @@
+# principled: a red dielectric base at roughness 0.1, 0.4 and 0.8, a
+# half-metallic blue, and a white one, lit by a rectangular light, a small
+# spherical light (two lights: power-based light selection) and a dim sky.
+# With the "mypbr" BSDF translation Mitsuba renders the same model (GGX +
+# Schlick specular over a Lambertian base scaled by (1 - F)(1 - F)); its
+# own principled has a Disney diffuse base instead, so that one differs.
+
+image_width  384
+aspect_ratio 2
+samples_per_pixel 512
+max_depth    64
+background   0.1 0.1 0.12
+
+camera lookfrom 0 2.2 9  lookat 0 0.6 0  vup 0 1 0  vfov 24
+
+material floor  lambertian 0.5 0.5 0.5
+material wall   lambertian 0.35 0.3 0.25
+material lamp   emissive 5 5 5
+material bulb   emissive 40 30 20
+material red10  principled color 0.7 0.08 0.05 roughness 0.1
+material red40  principled color 0.7 0.08 0.05 roughness 0.4
+material red80  principled color 0.7 0.08 0.05 roughness 0.8
+material blue   principled color 0.2 0.4 0.9 metallic 0.5 roughness 0.3
+material white  principled color 0.9 0.9 0.9 roughness 0.25 ior 1.8
+
+quad -10 0 -10   20 0 0   0 0 20   floor
+quad -10 0 -3    20 0 0   0 6 0    wall
+quad -2 5 -1     4 0 0    0 0 3    lamp
+sphere 2.6 2.2 1.2  0.15  bulb
+
+sphere -2.4 0.55 0    0.55  red10
+sphere -1.2 0.55 0    0.55  red40
+sphere  0.0 0.55 0    0.55  red80
+sphere  1.2 0.55 0    0.55  blue
+sphere  2.4 0.55 0    0.55  white

@@ -1,0 +1,35 @@
+# GGX metal: a mirror, then gold at roughness 0.15, 0.35, 0.6 and 0.9, and a
+# white metal at 0.9, under a rectangular light and a dim uniform sky.
+# The rough spheres show the Kulla-Conty compensation: with the "mypbr"
+# BSDF translation Mitsuba renders the same model and should match; against
+# Mitsuba's own principled (no compensation, separable Smith G) the rough
+# spheres come out brighter in mypbr, more so the rougher and whiter they are.
+
+image_width  384
+aspect_ratio 2
+samples_per_pixel 512
+max_depth    64
+background   0.15 0.15 0.15
+
+camera lookfrom 0 2.2 9  lookat 0 0.6 0  vup 0 1 0  vfov 24
+
+material floor  lambertian 0.5 0.5 0.5
+material wall   lambertian 0.3 0.35 0.4
+material lamp   emissive 6 6 6
+material mirror metal 0.9 0.9 0.9 0
+material g15    metal 1.0 0.78 0.34 0.15
+material g35    metal 1.0 0.78 0.34 0.35
+material g60    metal 1.0 0.78 0.34 0.6
+material g90    metal 1.0 0.78 0.34 0.9
+material w90    metal 0.95 0.95 0.95 0.9
+
+quad -10 0 -10   20 0 0   0 0 20   floor
+quad -10 0 -3    20 0 0   0 6 0    wall
+quad -2 5 -1     4 0 0    0 0 3    lamp      # facing down
+
+sphere -3.0 0.55 0  0.55  mirror
+sphere -1.8 0.55 0  0.55  g15    translate 0.6 0 0
+sphere -0.6 0.55 0  0.55  g35    translate 0.6 0 0
+sphere  0.6 0.55 0  0.55  g60    translate 0.6 0 0
+sphere  1.8 0.55 0  0.55  g90    translate 0.6 0 0
+sphere  0.0 0.4  1.5 0.4  w90

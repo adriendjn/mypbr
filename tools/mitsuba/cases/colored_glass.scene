@@ -1,0 +1,33 @@
+# Colored glass (scenes/colored_glass.scene on a plain floor): spheres of
+# radius 0.2, 0.45 and 0.8 and a frosted one in the same green glass (45%
+# red, 80% green, 60% blue kept per unit length), a thin pane and a thick
+# block. Mitsuba gets a dielectric boundary around a purely absorbing
+# homogeneous medium, which is what Beer-Lambert absorption is.
+
+image_width  384
+aspect_ratio 3/2
+samples_per_pixel 1024
+max_depth    64
+background   0.35 0.4 0.5
+
+camera lookfrom 0 3.2 8.5  lookat 0 0.6 0  vup 0 1 0  vfov 32
+
+material floor lambertian 0.6 0.6 0.6
+material lamp  emissive 5 5 5
+
+material green dielectric 1.5 color 0.45 0.8 0.6 distance 1
+material frost dielectric 1.5 roughness 0.25 color 0.45 0.8 0.6 distance 1
+
+quad -20 0 -20   40 0 0   0 0 40   floor
+quad -2 6 -1   4 0 0   0 0 3   lamp      # area light above, facing down
+
+sphere -2.9 0.2  0.9  0.2   green
+sphere -1.9 0.45 0.9  0.45  green
+sphere -0.2 0.8  0.9  0.8   green
+sphere  1.9 0.6  0.9  0.6   frost
+
+# Lifted off the floor: a bottom face in the floor's plane would make each
+# renderer pick a different surface there, and mypbr does not tint a segment
+# that ends on another object inside the glass (the floor), Mitsuba does.
+box -3.4 0.002 -1.6  -1.6 1.6 -1.56  green  rotate_y 30    # thin pane
+box  0.6 0.002 -2.2   2.6 1.2 -1.0   green  rotate_y -20   # thick block
