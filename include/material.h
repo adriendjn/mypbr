@@ -193,22 +193,31 @@ class dielectric : public material{
 // The diffuse base only receives the light the specular layer lets through,
 // on the way in and on the way out, which keeps the total reflectance at or
 // below one (checked by the furnace test).
+//
+// Metallic and roughness can vary over the surface: they are read from the
+// red channel of a texture (load image maps as linear data) at every hit,
+// clamped to [0, 1]. Constants are solid textures.
 class principled : public material{
     public:
         principled(std::shared_ptr<texture> base_color, double metallic, double roughness, double ior)
-            : base_color(base_color), metallic(std::clamp(metallic, 0.0, 1.0)),
-              alpha(roughness_to_alpha(std::clamp(roughness, 0.0, 1.0)))
+            : principled(base_color, std::make_shared<solid_color>(color(metallic, metallic, metallic)),
+                         std::make_shared<solid_color>(color(roughness, roughness, roughness)), ior) {}
+
+        principled(std::shared_ptr<texture> base_color, std::shared_ptr<texture> metallic_map,
+                   std::shared_ptr<texture> roughness_map, double ior)
+            : base_color(base_color), metallic_map(metallic_map), roughness_map(roughness_map)
         {
             double r0 = (ior - 1) / (ior + 1);
             dielectric_f0 = r0 * r0;
         }
 
         bool scatter(const ray& r_in, const hit_record& rec, scatter_record& srec) const override {
+            double metallic = metallic_at(rec), alpha = alpha_at(rec);
             color base = base_color->value(rec.u, rec.v, rec.p);
             double cos_o = std::fmax(0.0, dot(rec.normal, unit_vector(-r_in.direction())));
 
             // Pick the specular lobe in proportion to its estimated share of the reflected light
-            double spec_weight = average(fresnel_schlick(cos_o, specular_f0(base)));
+            double spec_weight = average(fresnel_schlick(cos_o, specular_f0(base, metallic)));
             double diff_weight = (1 - metallic) * average(base) * (1 - fresnel_schlick(cos_o, dielectric_f0));
             double p_spec = spec_weight + diff_weight > 0 ? spec_weight / (spec_weight + diff_weight) : 1;
             p_spec = std::clamp(p_spec, 0.1, 1.0);
@@ -228,10 +237,11 @@ class principled : public material{
             if (wo.z() <= 0 || wi.z() <= 0)
                 return color(0, 0, 0);
 
+            double metallic = metallic_at(rec), alpha = alpha_at(rec);
             color base = base_color->value(rec.u, rec.v, rec.p);
             vec3 h = unit_vector(wo + wi);
             ggx dist(alpha);
-            color specular = fresnel_schlick(dot(wi, h), specular_f0(base))
+            color specular = fresnel_schlick(dot(wi, h), specular_f0(base, metallic))
                            * (dist.D(h) * dist.G(wo, wi) / (4 * wo.z()));
 
             double transmitted = (1 - fresnel_schlick(wi.z(), dielectric_f0))
@@ -243,11 +253,20 @@ class principled : public material{
 
     private:
         std::shared_ptr<texture> base_color;
-        double metallic;
-        double alpha;
+        std::shared_ptr<texture> metallic_map;
+        std::shared_ptr<texture> roughness_map;
         double dielectric_f0;
 
-        color specular_f0(const color& base) const {
+        double metallic_at(const hit_record& rec) const {
+            return std::clamp(metallic_map->value(rec.u, rec.v, rec.p).x(), 0.0, 1.0);
+        }
+
+        // GGX alpha at the hit, from the roughness there
+        double alpha_at(const hit_record& rec) const {
+            return roughness_to_alpha(std::clamp(roughness_map->value(rec.u, rec.v, rec.p).x(), 0.0, 1.0));
+        }
+
+        color specular_f0(const color& base, double metallic) const {
             return (1 - metallic) * color(dielectric_f0, dielectric_f0, dielectric_f0) + metallic * base;
         }
 

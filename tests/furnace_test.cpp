@@ -111,5 +111,15 @@ int main() {
         ok &= bounded("principled metallic, roughness " + r,
                       std::make_shared<principled>(white, 1.0, roughness, 1.5));
     }
+
+    // Roughness and metallic from textures: a checkerboard of smooth and rough,
+    // dielectric and metal patches, looked up per hit
+    auto patches = [](double a, double b) {
+        return std::make_shared<checker_texture>(0.2, std::make_shared<solid_color>(color(a, a, a)),
+                                                 std::make_shared<solid_color>(color(b, b, b)));
+    };
+    ok &= bounded("principled, textured roughness and metallic",
+                  std::make_shared<principled>(white, patches(0, 1), patches(0.1, 0.9), 1.5));
+
     return ok ? 0 : 1;
 }

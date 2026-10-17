@@ -63,7 +63,9 @@ class scene{
 //
 // principled settings are all optional and can come in any order (defaults:
 // color 0.8 0.8 0.8, metallic 0, roughness 0.5, ior 1.5); "texture <name>"
-// can replace "color r g b".
+// can replace "color r g b", and "metallic texture <name>" and "roughness
+// texture <name>" read those from a texture's red channel at every hit:
+//   material worn   principled texture rust metallic texture rust_m roughness texture rust_r
 //   material lamp   emissive 15 15 15         # area light, radiance r g b
 //   material haze   volume 0.9 0.9 0.9 g 0.3  # for media: scattering albedo r g b,
 //                                             # optional Henyey-Greenstein g in (-1, 1)
@@ -161,6 +163,38 @@ inline bool load_scene(const std::string& path, scene& result) {
         return true;
     };
     auto default_material = std::make_shared<lambertian>(color(0.5, 0.5, 0.5));
+
+    // Reads "<name>" of a defined texture into tex; false with a message in error if there is none.
+    auto read_texture_name = [&](std::istringstream& in, std::shared_ptr<texture>& tex, std::string& error) {
+        std::string name;
+        if (!(in >> name)) {
+            error = "expected a texture name";
+            return false;
+        }
+        auto it = textures.find(name);
+        if (it == textures.end()) {
+            error = "unknown texture '" + name + "'";
+            return false;
+        }
+        tex = it->second;
+        return true;
+    };
+
+    // Reads "<number>" or "texture <name>" into tex, the number within [0, 1]
+    // (a principled metallic or roughness value).
+    auto read_value_or_texture = [&](std::istringstream& in, std::shared_ptr<texture>& tex, std::string& error) {
+        std::string first;
+        if (!(in >> first))
+            return false;
+        if (first == "texture")
+            return read_texture_name(in, tex, error);
+        std::istringstream number(first);
+        double x;
+        if (!(number >> x) || x < 0 || x > 1)
+            return false;
+        tex = std::make_shared<solid_color>(color(x, x, x));
+        return true;
+    };
 
     // Reads what may follow an object's geometry: an optional material name,
     // then any transforms, applied in the order given. Returns false with a
@@ -427,7 +461,9 @@ inline bool load_scene(const std::string& path, scene& result) {
                 mat = std::make_shared<dielectric>(ior, roughness);
             } else if (type == "principled") {
                 std::shared_ptr<texture> base = std::make_shared<solid_color>(color(0.8, 0.8, 0.8));
-                double metallic = 0, roughness = 0.5, ior = 1.5;
+                std::shared_ptr<texture> metallic = std::make_shared<solid_color>(color(0, 0, 0));
+                std::shared_ptr<texture> roughness = std::make_shared<solid_color>(color(0.5, 0.5, 0.5));
+                double ior = 1.5;
                 std::string key, error;
                 while (in >> key) {
                     bool ok = true;
@@ -437,8 +473,8 @@ inline bool load_scene(const std::string& path, scene& result) {
                         std::string first;
                         ok = bool(in >> first) && read_color_or_texture(in, first, base, error);
                     }
-                    else if (key == "metallic")  ok = bool(in >> metallic) && metallic >= 0 && metallic <= 1;
-                    else if (key == "roughness") ok = bool(in >> roughness) && roughness >= 0 && roughness <= 1;
+                    else if (key == "metallic")  ok = read_value_or_texture(in, metallic, error);
+                    else if (key == "roughness") ok = read_value_or_texture(in, roughness, error);
                     else if (key == "ior")       ok = bool(in >> ior) && ior > 0;
                     else return fail(line_number, "unknown principled setting '" + key + "'");
                     if (!ok)
