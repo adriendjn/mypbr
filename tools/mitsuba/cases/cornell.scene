@@ -1,0 +1,27 @@
+# Diffuse only: the Cornell box (scenes/cornell.scene) with Lambertian walls
+# and boxes, one area light. Checks the core path tracer: NEE + MIS on an
+# area light, cosine sampling, quads, boxes, rotations, and indirect bounces
+# (the red and green bleeding onto the white walls).
+
+image_width  256
+aspect_ratio 1
+samples_per_pixel 1024
+max_depth    64
+background   0 0 0
+
+camera lookfrom 278 278 -800  lookat 278 278 0  vup 0 1 0  vfov 40
+
+material red   lambertian 0.65 0.05 0.05
+material white lambertian 0.73 0.73 0.73
+material green lambertian 0.12 0.45 0.15
+material light emissive 15 15 15
+
+quad 555 0 0    0 555 0    0 0 555   green   # left wall
+quad 0 0 0      0 555 0    0 0 555   red     # right wall
+quad 343 554 332  -130 0 0  0 0 -105 light   # ceiling light
+quad 0 0 0      555 0 0    0 0 555   white   # floor
+quad 555 555 555  -555 0 0  0 0 -555 white   # ceiling
+quad 0 0 555    555 0 0    0 555 0   white   # back wall
+
+box 0 0 0  165 330 165  white  rotate_y 15   translate 265 0 295
+box 0 0 0  165 165 165  white  rotate_y -18  translate 130 0 65
