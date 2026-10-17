@@ -34,6 +34,9 @@ class instance : public hittable{
 
             rec.p = xform.apply_point(rec.p);
             rec.normal = unit_vector(xform.apply_normal(rec.normal));
+            // Tangents are directions on the surface, moved like any vector
+            rec.dpdu = xform.apply_vector(rec.dpdu);
+            rec.dpdv = xform.apply_vector(rec.dpdv);
             return true;
         }
 

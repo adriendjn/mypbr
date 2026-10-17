@@ -57,7 +57,9 @@ class checker_texture : public texture{
 
 // An image (PNG, JPEG, TGA, HDR, ...) mapped over the (u, v) unit square,
 // with v = 0 at the bottom row. 8-bit images are assumed sRGB encoded and
-// converted to linear values; HDR images are already linear.
+// converted to linear values; HDR images are already linear. With linear set,
+// 8-bit values are taken as they are (k / 255): for data rather than colors,
+// such as normal maps or roughness maps, which no sRGB curve was applied to.
 //
 // Coordinates outside [0, 1] are clamped to the edge, or wrapped around with
 // repeat set (tiled textures on meshes). alpha_value() reads the alpha
@@ -65,7 +67,8 @@ class checker_texture : public texture{
 class image_texture : public texture{
     public:
         // Loads the image; check loaded() afterwards.
-        explicit image_texture(const std::string& path, bool repeat = false) : repeat(repeat) {
+        explicit image_texture(const std::string& path, bool repeat = false, bool linear = false)
+            : repeat(repeat), linear(linear) {
             if (stbi_is_hdr(path.c_str())) {
                 float* data = stbi_loadf(path.c_str(), &width, &height, nullptr, 3);
                 if (!data)
@@ -89,6 +92,9 @@ class image_texture : public texture{
                         opaque = false;
                         break;
                     }
+                grey = channels <= 2;
+                for (size_t k = 0; grey && k < ldr_pixels.size(); k += 4)
+                    grey = ldr_pixels[k] == ldr_pixels[k + 1] && ldr_pixels[k] == ldr_pixels[k + 2];
             }
         }
 
@@ -99,11 +105,17 @@ class image_texture : public texture{
         bool has_alpha_channel() const { return alpha_channel; }
         bool fully_opaque() const { return opaque; }
 
+        // Whether every pixel has equal red, green and blue: a height or
+        // mask image rather than a color or normal map. False for HDR images.
+        bool greyscale() const { return grey; }
+
         color value(double u, double v, const point3& p) const override {
             (void)p;
             size_t k = pixel_index(u, v);
             if (!hdr_pixels.empty())
                 return color(hdr_pixels[3*k], hdr_pixels[3*k + 1], hdr_pixels[3*k + 2]);
+            if (linear)
+                return color(ldr_pixels[4*k], ldr_pixels[4*k + 1], ldr_pixels[4*k + 2]) / 255.0;
             const auto& table = srgb_table();
             return color(table[ldr_pixels[4*k]], table[ldr_pixels[4*k + 1]], table[ldr_pixels[4*k + 2]]);
         }
@@ -119,10 +131,12 @@ class image_texture : public texture{
     private:
         int width = 0, height = 0;
         bool repeat;
+        bool linear;  // 8-bit values are data, not sRGB encoded colors
         bool alpha_channel = false;
         bool opaque = true;
+        bool grey = false;
         int mask_offset = 3;  // Byte of each pixel that alpha_value() reads
-        std::vector<unsigned char> ldr_pixels;  // RGBA, sRGB encoded
+        std::vector<unsigned char> ldr_pixels;  // RGBA, sRGB encoded unless linear
         std::vector<float> hdr_pixels;          // RGB, linear
 
         // Nearest pixel to (u, v), as an index into the pixel arrays.

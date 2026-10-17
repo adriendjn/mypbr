@@ -16,6 +16,7 @@
 #include <medium.h>
 #include <quad.h>
 #include <sphere.h>
+#include <texture.h>
 
 #include <cmath>
 #include <iostream>
@@ -61,6 +62,17 @@ static void render_furnace(std::shared_ptr<hittable> object, double& mean, doubl
 static std::shared_ptr<hittable> furnace_sphere(std::shared_ptr<material> mat) {
     return std::make_shared<sphere>(point3(0, 0, -1), 0.5, mat);
 }
+
+// A tangent-space normal map tilting up to about 50 degrees, in waves over u and v.
+class wavy_normals : public texture{
+    public:
+        color value(double u, double v, const point3& p) const override {
+            (void)p;
+            double x = 0.6 * std::sin(40 * u), y = 0.6 * std::cos(25 * v);
+            double z = std::sqrt(std::fmax(1 - x*x - y*y, 0.0));
+            return 0.5 * color(x, y, z) + color(0.5, 0.5, 0.5);
+        }
+};
 
 // Energy conserving: the object must vanish.
 static bool furnace(const std::string& name, std::shared_ptr<hittable> object, double tolerance,
@@ -230,5 +242,24 @@ int main() {
         for (double cos_o : {1.0, 0.5, 0.1})
             ok &= albedo_one("compensated GGX metal, roughness " + r, *white_metal, cos_o, 0.01);
     }
+
+    // Roughness and metallic from textures: a checkerboard of smooth and rough,
+    // dielectric and metal patches, looked up per hit
+    auto patches = [](double a, double b) {
+        return std::make_shared<checker_texture>(0.2, std::make_shared<solid_color>(color(a, a, a)),
+                                                 std::make_shared<solid_color>(color(b, b, b)));
+    };
+    ok &= bounded("principled, textured roughness and metallic",
+                  std::make_shared<principled>(white, patches(0, 1), patches(0.1, 0.9), 1.5));
+
+    // Normal maps bend the shading normal but must not create energy. The
+    // map below is strongly tilted and varies quickly over the sphere.
+    auto bumps = std::make_shared<wavy_normals>();
+    ok &= furnace("normal mapped mirror", furnace_sphere(std::make_shared<normal_mapped>(
+                      std::make_shared<metal>(color(1, 1, 1), 0.0), bumps)), 1e-6);
+    ok &= bounded("normal mapped lambertian", std::make_shared<normal_mapped>(
+                      std::make_shared<lambertian>(color(1, 1, 1)), bumps));
+    ok &= bounded("normal mapped principled", std::make_shared<normal_mapped>(
+                      std::make_shared<principled>(white, 0.0, 0.3, 1.5), bumps));
     return ok ? 0 : 1;
 }

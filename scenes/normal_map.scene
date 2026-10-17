@@ -1,0 +1,34 @@
+# Normal, roughness and metallic maps (textures from tools/gen_tile_maps.py).
+# A tiled floor and wall (lambertian + normal map) behind three spheres:
+#   left:   gold metal, normal mapped
+#   middle: principled, normal map + roughness map (smooth and rough tiles)
+#           + metallic map (metal studs on a dielectric base)
+#   right:  the same principled material without its normal map
+# A low light from the left rakes across the wall so the bumps cast shading.
+
+image_width  640
+aspect_ratio 16/9
+samples_per_pixel 128
+max_depth    16
+tonemap      aces
+
+camera lookfrom 0 2.2 7.5  lookat 0 1.1 0  vup 0 1 0  vfov 38
+
+environment ../textures/quarry_01_1k.hdr intensity 0.4 rotate 120
+
+texture tiles_n image ../textures/tiles_normal.png linear
+texture tiles_r image ../textures/tiles_roughness.png linear
+texture tiles_m image ../textures/tiles_metallic.png linear
+
+material wall   lambertian 0.75 0.7 0.62 normal_map tiles_n
+material gold   metal 1.0 0.78 0.34 0.25 normal_map tiles_n
+material bumpy  principled color 0.65 0.12 0.08 metallic texture tiles_m roughness texture tiles_r normal_map tiles_n
+material flat   principled color 0.65 0.12 0.08 metallic texture tiles_m roughness texture tiles_r
+material sun    emissive 400 380 340
+
+quad -4 0 4   8 0 0  0 0 -8   wall    # floor: u along +x, v away from the camera
+quad -4 0 -2  8 0 0  0 4 0    wall    # back wall, facing the camera
+sphere -2.1 0.8 0.6  0.8  gold
+sphere  0   0.8 0.6  0.8  bumpy
+sphere  2.1 0.8 0.6  0.8  flat
+sphere -9 2.5 3  0.4  sun

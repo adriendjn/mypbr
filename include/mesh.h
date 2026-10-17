@@ -71,7 +71,8 @@ class triangle : public hittable{
 
             double b0 = 1 - b1 - b2;
             double u = b1, v = b2;
-            if (ti[0] >= 0 && ti[1] >= 0 && ti[2] >= 0) {
+            bool has_uvs = ti[0] >= 0 && ti[1] >= 0 && ti[2] >= 0;
+            if (has_uvs) {
                 vec3 uv = b0 * data->uvs[ti[0]] + b1 * data->uvs[ti[1]] + b2 * data->uvs[ti[2]];
                 u = uv.x();
                 v = uv.y();
@@ -89,6 +90,7 @@ class triangle : public hittable{
             rec.v = v;
             rec.p = r.at(t);
             rec.mat = mat;
+            set_tangents(e1, e2, has_uvs, rec);
 
             // front_face comes from the geometric normal (counterclockwise winding)
             vec3 geometric = unit_vector(cross(e1, e2));
@@ -136,6 +138,29 @@ class triangle : public hittable{
     private:
         const mesh_data* data;
         int vi[3], ni[3], ti[3];
+
+        // dp/du and dp/dv, constant over the triangle. The edges are
+        // e1 = du1 dp/du + dv1 dp/dv and e2 = du2 dp/du + dv2 dp/dv in terms
+        // of their uv differences; inverting that 2x2 system gives both.
+        // Computed per hit rather than stored, to keep large meshes small.
+        void set_tangents(const vec3& e1, const vec3& e2, bool has_uvs, hit_record& rec) const {
+            if (!has_uvs) {
+                // u and v are the barycentrics b1, b2: p = p0 + u e1 + v e2
+                rec.dpdu = e1;
+                rec.dpdv = e2;
+                return;
+            }
+            vec3 duv1 = data->uvs[ti[1]] - data->uvs[ti[0]];
+            vec3 duv2 = data->uvs[ti[2]] - data->uvs[ti[0]];
+            double det = duv1.x() * duv2.y() - duv2.x() * duv1.y();
+            if (std::fabs(det) < 1e-12) {
+                rec.dpdu = rec.dpdv = vec3(0, 0, 0);  // Degenerate uvs: no tangent frame
+                return;
+            }
+            double inv = 1 / det;
+            rec.dpdu = (duv2.y() * e1 - duv1.y() * e2) * inv;
+            rec.dpdv = (duv1.x() * e2 - duv2.x() * e1) * inv;
+        }
         const material* mat;
         const image_texture* alpha_mask;  // Owned by the mesh; null when opaque
         aabb bbox;

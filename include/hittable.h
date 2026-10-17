@@ -17,6 +17,10 @@ class hit_record{
                               // atomic reference counting on every hit across threads
         double t;
         double u, v;  // Surface (texture) coordinates
+        // How p moves with u and v (dp/du, dp/dv), unnormalized: the tangent
+        // and bitangent of tangent-space normal maps. Zero when the surface
+        // has no usable (u, v) parameterization.
+        vec3 dpdu, dpdv;
         bool front_face;
 
         // Sets the normal so it always points against the incoming ray.
