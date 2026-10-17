@@ -54,6 +54,15 @@ class scene{
 //                              # (0 = perspective); from lookfrom along (1, 1, 1)
 //                              # towards lookat, it is the isometric view
 //
+//   style voxel                # MagicaVoxel's look in one line, the same as:
+//                              #   tonemap aces, bloom 0.25, vignette 0.25,
+//                              #   sun elevation 50 azimuth 50 intensity 4 angle 3,
+//                              #   sky atmosphere, ground (grey 0.3),
+//                              #   bounces diffuse 2 specular 5 scatter 5,
+//                              #   transparent_shadows on
+//                              # Lines after it change any of these; "style classic"
+//                              # puts back the defaults (physically exact bounces,
+//                              # gradient sky, no sun or ground, no tonemap)
 //   bounces diffuse 2 specular 5 scatter 5   # MagicaVoxel-style caps on each kind
 //                              # of bounce (0 = no cap): fewer diffuse bounces render
 //                              # faster and darken crevices (a look, not physics)
@@ -551,6 +560,35 @@ inline bool load_scene(const std::string& path, scene& result) {
                         return fail(line_number, "unknown material '" + key + "'");
                     ground_material = it->second;
                 }
+            }
+        } else if (keyword == "style") {
+            // A preset of the lines below; lines after it can change any of them
+            std::string name;
+            if (!(in >> name) || (name != "voxel" && name != "classic"))
+                return fail(line_number, "expected 'style voxel' or 'style classic'");
+            bool voxel = name == "voxel";
+            auto& post = result.display.post;
+            result.display.op = voxel ? tonemapper::aces : tonemapper::none;
+            post = post_settings();
+            sun = sun_settings();
+            sky_uniform = false;
+            sky_atmosphere = voxel;
+            air = atmosphere_settings();
+            cam.use_sky = true;
+            ground = voxel;
+            ground_material = voxel ? std::make_shared<lambertian>(color(0.3, 0.3, 0.3)) : default_material;
+            cam.max_diffuse = voxel ? 2 : 0;
+            cam.max_specular = voxel ? 5 : 0;
+            cam.max_scatter = voxel ? 5 : 0;
+            cam.transparent_shadows = voxel;
+            if (voxel) {
+                post.bloom = 0.25;
+                post.vignette = 0.25;
+                sun.on = true;
+                sun.elevation = 50;
+                sun.azimuth = 50;
+                sun.intensity = 4;
+                sun.angle = 3;
             }
         } else if (keyword == "bounces") {
             const char* usage = "expected 'bounces [diffuse <n>] [specular <n>] [scatter <n>]'";

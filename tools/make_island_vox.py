@@ -127,7 +127,7 @@ def main():
     for k in range(1, 257):  # 256 entries; entry k is palette index k (the last is unused)
         rgba += bytes(COLORS.get(k, (200, 200, 200))) + b"\xff"
     body += graph + chunk(b"RGBA", bytes(rgba))
-    for idx, props in ((WATER, {"_type": "_glass", "_rough": "0", "_ri": "1.33", "_att": "0.3"}),
+    for idx, props in ((WATER, {"_type": "_glass", "_rough": "0", "_ri": "1.33", "_att": "0.15"}),
                        (LANTERN, {"_type": "_emit", "_emit": "1", "_flux": "1.3"}),
                        (BELL, {"_type": "_metal", "_metal": "1", "_rough": "0.25"})):
         body += chunk(b"MATL", struct.pack("<i", idx) + dictionary(props))
