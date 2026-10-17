@@ -50,6 +50,16 @@ class scene{
 //   camera lookfrom 13 2 3  lookat 0 0 0  vup 0 1 0  vfov 20
 //   aperture     0.6           # defocus angle in degrees (0 = pinhole)
 //   camera blades 6 blade_rotation 15   # polygonal aperture: hexagonal bokeh
+//   camera ortho 40            # orthographic projection showing 40 units of height
+//                              # (0 = perspective); from lookfrom along (1, 1, 1)
+//                              # towards lookat, it is the isometric view
+//
+//   bounces diffuse 2 specular 5 scatter 5   # MagicaVoxel-style caps on each kind
+//                              # of bounce (0 = no cap): fewer diffuse bounces render
+//                              # faster and darken crevices (a look, not physics)
+//   transparent_shadows on     # shadow rays cross smooth glass in a straight line,
+//                              # tinted (MagicaVoxel's translucent shadows): sunlit
+//                              # water without caustic noise, but not exact
 //   focus        10            # distance to the plane of perfect focus
 //
 // The camera line takes any of its settings, in any order; aperture and
@@ -137,6 +147,8 @@ class scene{
 //                                                     # the emissive voxels; quads uses
 //                                                     # faces in a BVH instead of the
 //                                                     # voxel grid (same image, slower)
+//   vox    models/island.vox  edges 0.06 [0 0 0]      # outlines the voxel shapes
+//                                                     # (grid only), width in voxels
 //
 // Any object can be followed by transforms, applied in the order given:
 //
@@ -154,6 +166,9 @@ class scene{
 //   medium 0.01  box 1 1 1  554 554 554  haze      # density, boundary, material
 //   medium 0.05  sphere 0 1 0  1  haze  translate 2 0 0
 //   fog    0.002 haze      # fills the bounding box of everything in the scene
+//   height_fog 0.02 8 haze [base 0]   # fog everywhere, density 0.02 at y = base,
+//                              # falling by e every 8 units up: valley mist, and
+//                              # a horizon that fades into the sky
 //
 // Transformed objects are instances sharing the original geometry; a mesh
 // file used several times with the same material is loaded once. In a mesh,
@@ -420,6 +435,7 @@ inline bool load_scene(const std::string& path, scene& result) {
                 else if (key == "vfov")     ok = bool(in >> cam.vfov) && cam.vfov > 0 && cam.vfov < 180;
                 else if (key == "aperture") ok = bool(in >> cam.defocus_angle) && cam.defocus_angle >= 0;
                 else if (key == "focus")    ok = bool(in >> cam.focus_dist) && cam.focus_dist > 0;
+                else if (key == "ortho")    ok = bool(in >> cam.ortho_height) && cam.ortho_height >= 0;
                 else if (key == "blades")   ok = bool(in >> cam.blades) && (cam.blades == 0 || cam.blades >= 3);
                 else if (key == "blade_rotation") ok = bool(in >> cam.blade_rotation);
                 else return fail(line_number, "unknown camera setting '" + key + "'");
@@ -536,6 +552,32 @@ inline bool load_scene(const std::string& path, scene& result) {
                     ground_material = it->second;
                 }
             }
+        } else if (keyword == "bounces") {
+            const char* usage = "expected 'bounces [diffuse <n>] [specular <n>] [scatter <n>]'";
+            std::string key;
+            while (in >> key) {
+                bool ok = (key == "diffuse" && in >> cam.max_diffuse && cam.max_diffuse >= 0)
+                       || (key == "specular" && in >> cam.max_specular && cam.max_specular >= 0)
+                       || (key == "scatter" && in >> cam.max_scatter && cam.max_scatter >= 0);
+                if (!ok)
+                    return fail(line_number, usage);
+            }
+        } else if (keyword == "transparent_shadows") {
+            std::string value;
+            if (!(in >> value) || (value != "on" && value != "off"))
+                return fail(line_number, "expected 'transparent_shadows on|off'");
+            cam.transparent_shadows = value == "on";
+        } else if (keyword == "height_fog") {
+            double density, scale, base = 0;
+            std::string name, key;
+            if (!(in >> density >> scale >> name) || density <= 0 || scale <= 0)
+                return fail(line_number, "expected 'height_fog <density> <scale height> <volume material> [base <y>]'");
+            if (in >> key && (key != "base" || !(in >> base)))
+                return fail(line_number, "expected 'height_fog <density> <scale height> <volume material> [base <y>]'");
+            auto it = materials.find(name);
+            if (it == materials.end() || !std::dynamic_pointer_cast<phase_material>(it->second))
+                return fail(line_number, "expected a volume material, got '" + name + "'");
+            result.unbounded.add(std::make_shared<height_fog>(density, scale, base, it->second));
         } else if (keyword == "bloom") {
             auto& post = result.display.post;
             const char* usage = "expected 'bloom <strength> [threshold <radiance>] [radius <fraction of width>]'";
@@ -779,7 +821,7 @@ inline bool load_scene(const std::string& path, scene& result) {
                 return fail(line_number, "expected a volume material, got '" + name + "'");
             fog_material = it->second;
         } else if (keyword == "vox") {
-            const char* usage = "expected 'vox <file.vox> [quads] [emission <scale>] [transforms]'";
+            const char* usage = "expected 'vox <file.vox> [quads] [emission <scale>] [edges <width> [<r g b>]] [transforms]'";
             std::string file, token, error;
             if (!(in >> file))
                 return fail(line_number, usage);
@@ -787,7 +829,8 @@ inline bool load_scene(const std::string& path, scene& result) {
                 file = scene_dir + file;
             // Options come first; the rest are transforms
             bool quads = false;
-            double emission = 1;
+            double emission = 1, edge_width = 0;
+            color edge_color(0, 0, 0);
             std::vector<std::string> rest;
             while (in >> token)
                 rest.push_back(token);
@@ -799,6 +842,19 @@ inline bool load_scene(const std::string& path, scene& result) {
                     std::istringstream number(rest[++k]);
                     if (!(number >> emission) || emission < 0)
                         return fail(line_number, usage);
+                } else if (rest[k] == "edges" && k + 1 < rest.size()) {
+                    // edges <width> [r g b]
+                    std::istringstream number(rest[++k]);
+                    if (!(number >> edge_width) || edge_width <= 0 || edge_width >= 0.5)
+                        return fail(line_number, usage);
+                    if (k + 3 < rest.size()) {
+                        std::istringstream rgb(rest[k + 1] + ' ' + rest[k + 2] + ' ' + rest[k + 3]);
+                        color c;
+                        if (rgb >> c[0] >> c[1] >> c[2]) {
+                            edge_color = c;
+                            k += 3;
+                        }
+                    }
                 } else {
                     break;
                 }
@@ -835,7 +891,9 @@ inline bool load_scene(const std::string& path, scene& result) {
                 if (quads)
                     geometry[m] = std::make_shared<bvh>(list);
                 else
-                    geometry[m] = voxel_blocks(std::make_shared<vox_model>(vox.models[m]), palette);
+                    geometry[m] = voxel_blocks(std::make_shared<vox_model>(vox.models[m]), palette, 8,
+                                               edge_width > 0 ? std::make_shared<lambertian>(edge_color) : nullptr,
+                                               edge_width);
             }
             std::clog << "Loaded " << file << ": " << vox.models.size() << " models, "
                       << vox.instances.size() << " instances, " << faces << " visible faces\n";

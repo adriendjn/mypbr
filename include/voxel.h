@@ -167,11 +167,15 @@ inline void voxel_model_faces(const vox_model& m, const voxel_palette& pal,
 // Model coordinates: cell (x, y, z) covers [x, x+1] x [y, y+1] x [z, z+1].
 class voxel_grid : public hittable{
     public:
-        // The block of cells [lo, hi) of model.
+        // The block of cells [lo, hi) of model. With an edge material, the
+        // outlines of the model's shapes (see on_edge) are drawn with it,
+        // edge_width wide (in voxels).
         voxel_grid(std::shared_ptr<const vox_model> model, std::shared_ptr<const voxel_palette> palette,
-                   const int lo[3], const int hi[3])
+                   const int lo[3], const int hi[3],
+                   std::shared_ptr<material> edge_material = nullptr, double edge_width = 0)
             : model(model), palette(palette), cells(model->cells.data()),
-              nx(model->nx), ny(model->ny), nz(model->nz)
+              nx(model->nx), ny(model->ny), nz(model->nz),
+              edge_material(edge_material), edge_width(edge_material ? edge_width : 0)
         {
             for (int a = 0; a < 3; a++) {
                 this->lo[a] = lo[a];
@@ -242,7 +246,7 @@ class voxel_grid : public hittable{
                 int a = enter_axis;
                 int behind[3] = {c[0], c[1], c[2]};
                 behind[a] -= step[a];
-                if (crossing(r, t_enter, a, step[a], at(behind), index, rec))
+                if (crossing(r, t_enter, a, step[a], at(behind), index, c, rec))
                     return true;
             }
 
@@ -255,7 +259,7 @@ class voxel_grid : public hittable{
                 c[a] += step[a];
                 t_next[a] += t_delta[a];
                 uint8_t next = at(c);  // 0 outside the model
-                if (crossing(r, t, a, step[a], index, next, rec))
+                if (crossing(r, t, a, step[a], index, next, c, rec))
                     return true;
                 if (c[a] < lo[a] || c[a] >= hi[a])
                     return false;  // Left the block
@@ -268,6 +272,8 @@ class voxel_grid : public hittable{
         std::shared_ptr<const voxel_palette> palette;  // Owns the materials
         const uint8_t* cells;  // model's, read directly in the inner loop
         int nx, ny, nz;
+        std::shared_ptr<material> edge_material;
+        double edge_width;
         int lo[3], hi[3];
         voxel_kind kinds[256];
         const material* mats[256];
@@ -281,23 +287,52 @@ class voxel_grid : public hittable{
         }
 
         // The ray crosses, at t, the plane perpendicular to axis from the cell
-        // of palette index from to the next one (step is +1 or -1 along axis).
-        // Records a hit if that is a surface: the next cell's face, entering
-        // it, or else the face of the cell being left, seen from inside (out
-        // of glass, or out of a cell the ray started in).
+        // of palette index from to the next one, cell to_cell (step is +1 or
+        // -1 along axis). Records a hit if that is a surface: the next cell's
+        // face, entering it, or else the face of the cell being left, seen
+        // from inside (out of glass, or out of a cell the ray started in).
         bool crossing(const ray& r, double t, int axis, int step, uint8_t from, uint8_t to,
-                      hit_record& rec) const {
+                      const int to_cell[3], hit_record& rec) const {
             voxel_kind k_from = kinds[from], k_to = kinds[to];
             if (k_to != voxel_kind::empty && voxel_face_visible(k_to, k_from))
-                return record(r, t, axis, -step, to, rec);
-            if (voxel_face_visible(k_from, k_to))
-                return record(r, t, axis, step, from, rec);
+                return record(r, t, axis, -step, to, to_cell, rec);
+            if (voxel_face_visible(k_from, k_to)) {
+                int from_cell[3] = {to_cell[0], to_cell[1], to_cell[2]};
+                from_cell[axis] -= step;
+                return record(r, t, axis, step, from, from_cell, rec);
+            }
+            return false;
+        }
+
+        // True if the hit at p on the face of cell whose outward normal is
+        // along axis (sign) lies within edge_width of an outline: a convex
+        // edge, where the neighbouring face around the corner is a surface
+        // too, or a concave one, where a voxel stands in front of the
+        // neighbouring cell. Flat joins between faces in one plane are not
+        // outlined.
+        bool on_edge(const point3& p, int axis, int sign, const int cell[3]) const {
+            voxel_kind k = kinds[at(cell)];
+            for (int side = 1; side <= 2; side++) {
+                int tangent = (axis + side) % 3;
+                double f = p[tangent] - cell[tangent];
+                for (int dir : {-1, 1}) {
+                    if ((dir > 0 ? 1 - f : f) >= edge_width)
+                        continue;
+                    int beside[3] = {cell[0], cell[1], cell[2]};
+                    beside[tangent] += dir;
+                    int above[3] = {beside[0], beside[1], beside[2]};
+                    above[axis] += sign;
+                    if (voxel_face_visible(k, kinds[at(beside)]) || kinds[at(above)] != voxel_kind::empty)
+                        return true;
+                }
+            }
             return false;
         }
 
         // Fills rec for a hit at t on the face perpendicular to axis whose
-        // outward normal (from the cell of palette index) points along sign.
-        bool record(const ray& r, double t, int axis, int sign, uint8_t index, hit_record& rec) const {
+        // outward normal (from cell, of palette index) points along sign.
+        bool record(const ray& r, double t, int axis, int sign, uint8_t index, const int cell[3],
+                    hit_record& rec) const {
             rec.t = t;
             rec.p = r.at(t);
             int b = (axis + 1) % 3, c = (axis + 2) % 3;
@@ -310,16 +345,18 @@ class voxel_grid : public hittable{
             rec.dpdv = sign > 0 ? tc : tb;
             rec.u = dot(rec.p, rec.dpdu) - std::floor(dot(rec.p, rec.dpdu));
             rec.v = dot(rec.p, rec.dpdv) - std::floor(dot(rec.p, rec.dpdv));
-            rec.mat = mats[index];
+            rec.mat = edge_width > 0 && on_edge(rec.p, axis, sign, cell) ? edge_material.get() : mats[index];
             rec.set_face_normal(r, outward);
             return true;
         }
 };
 
 // A model as voxel_grid blocks of up to block^3 cells, skipping blocks with
-// no voxel, in a BVH.
+// no voxel, in a BVH. edge_material and edge_width as for voxel_grid.
 inline std::shared_ptr<hittable> voxel_blocks(std::shared_ptr<const vox_model> model,
-                                              std::shared_ptr<const voxel_palette> palette, int block = 8) {
+                                              std::shared_ptr<const voxel_palette> palette, int block = 8,
+                                              std::shared_ptr<material> edge_material = nullptr,
+                                              double edge_width = 0) {
     hittable_list blocks;
     for (int z0 = 0; z0 < model->nz; z0 += block)
         for (int y0 = 0; y0 < model->ny; y0 += block)
@@ -339,7 +376,7 @@ inline std::shared_ptr<hittable> voxel_blocks(std::shared_ptr<const vox_model> m
                                 }
                             }
                 if (hi[0] > lo[0])
-                    blocks.add(std::make_shared<voxel_grid>(model, palette, lo, hi));
+                    blocks.add(std::make_shared<voxel_grid>(model, palette, lo, hi, edge_material, edge_width));
             }
     return std::make_shared<bvh>(blocks);
 }
