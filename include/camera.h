@@ -240,6 +240,7 @@ class camera{
                 hit_record rec;
                 if (!world.hit(r, interval(0.001, infinity), rec))
                     break;
+                tint = tint * rec.mat->interior_transmittance(r, rec);  // Colored glass
                 scatter_record srec;
                 if (!rec.mat->scatter(r, rec, srec)) {
                     albedo = tint;  // A light: the radiance alone tells it apart
@@ -336,6 +337,15 @@ class camera{
                     }
                     break;
                 }
+
+                // Beer-Lambert absorption over the segment just traced, if it ran
+                // inside an absorbing dielectric (exited through a back face).
+                // Applied per segment, this covers every way out of the glass:
+                // refraction, total internal reflection, smooth or rough. Shadow
+                // rays need nothing: glass already blocks them. Nested media (fog
+                // or other objects inside glass) are not handled: a segment that
+                // ends on something else inside the glass is not attenuated.
+                beta = beta * rec.mat->interior_transmittance(r, rec);
 
                 // Emission found by BSDF sampling, weighted against light sampling
                 color emission = rec.mat->emitted(r, rec);

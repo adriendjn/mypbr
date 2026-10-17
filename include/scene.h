@@ -56,6 +56,10 @@ class scene{
 //   material gold   metal 0.8 0.6 0.2 0.3     # albedo r g b, roughness (0 = mirror)
 //   material glass  dielectric 1.5            # index of refraction
 //   material frost  dielectric 1.5 roughness 0.3
+//   material bottle dielectric 1.5 color 0.6 0.9 0.7 distance 2
+//                              # colored glass (Beer-Lambert absorption): light that
+//                              # travels <distance> inside keeps <color> of itself,
+//                              # so thick parts are darker (defaults: clear, distance 1)
 //   material paint  principled color 0.8 0.1 0.1 metallic 0 roughness 0.4 ior 1.5
 //
 // principled settings are all optional and can come in any order (defaults:
@@ -407,15 +411,31 @@ inline bool load_scene(const std::string& path, scene& result) {
                     return fail(line_number, "expected 'material <name> metal <r> <g> <b> <roughness>'");
                 mat = std::make_shared<metal>(color(r, g, b), roughness);
             } else if (type == "dielectric") {
-                double ior, roughness = 0;
+                const char* usage = "expected 'material <name> dielectric <index of refraction>"
+                                    " [roughness <r>] [color <r> <g> <b> [distance <d>]]'";
+                double ior, roughness = 0, distance = 1;
+                color tint(1, 1, 1);
                 std::string key;
                 if (!(in >> ior) || ior <= 0)
-                    return fail(line_number, "expected 'material <name> dielectric <index of refraction> [roughness <r>]'");
-                if (in >> key) {
-                    if (key != "roughness" || !(in >> roughness) || roughness < 0)
-                        return fail(line_number, "expected 'material <name> dielectric <index of refraction> [roughness <r>]'");
+                    return fail(line_number, usage);
+                while (in >> key) {
+                    bool ok = true;
+                    if (key == "roughness") {
+                        ok = bool(in >> roughness) && roughness >= 0;
+                    } else if (key == "color") {
+                        double r, g, b;
+                        // 0 would need infinite absorption, > 1 would add energy
+                        ok = bool(in >> r >> g >> b) && r > 0 && g > 0 && b > 0 && r <= 1 && g <= 1 && b <= 1;
+                        tint = color(r, g, b);
+                    } else if (key == "distance") {
+                        ok = bool(in >> distance) && distance > 0;
+                    } else {
+                        ok = false;
+                    }
+                    if (!ok)
+                        return fail(line_number, usage);
                 }
-                mat = std::make_shared<dielectric>(ior, roughness);
+                mat = std::make_shared<dielectric>(ior, roughness, dielectric::absorption_for(tint, distance));
             } else if (type == "principled") {
                 std::shared_ptr<texture> base = std::make_shared<solid_color>(color(0.8, 0.8, 0.8));
                 double metallic = 0, roughness = 0.5, ior = 1.5;

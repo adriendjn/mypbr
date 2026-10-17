@@ -10,7 +10,9 @@
 #include <camera.h>
 #include <hittable_list.h>
 #include <material.h>
+#include <instance.h>
 #include <medium.h>
+#include <quad.h>
 #include <sphere.h>
 
 #include <cmath>
@@ -79,6 +81,45 @@ static bool bounded(const std::string& name, std::shared_ptr<material> mat) {
     return ok;
 }
 
+// Beer-Lambert check: a camera with a narrow view looks straight through a
+// wide slab of absorbing glass with index 1 (no refraction, and no Fresnel
+// reflection at normal incidence) at a white background. Every pixel must be
+// exp(-sigma_a d) for slab thickness d. The slab can be built at half the
+// thickness and scaled by 2 in an instance, which checks that the distance is
+// measured in world space even though instance::hit leaves directions unnormalized.
+static bool slab_transmittance(const std::string& name, bool scaled) {
+    const double d = 0.8;
+    const color sigma_a(0.2, 1.0, 3.0);
+    auto glass = std::make_shared<dielectric>(1.0, 0.0, sigma_a);
+
+    hittable_list world, lights;
+    if (scaled) {
+        auto slab = box(point3(-50, -50, -1 - d / 2), point3(50, 50, -1), glass);
+        world.add(std::make_shared<instance>(slab, transform::scale(vec3(2, 2, 2))));
+    } else {
+        world.add(box(point3(-100, -100, -2 - d), point3(100, 100, -2), glass));
+    }
+
+    camera cam;
+    cam.image_width = 8;
+    cam.aspect_ratio = 1;
+    cam.samples_per_pixel = 4;
+    cam.max_depth = 10;
+    cam.vfov = 0.1;  // Off-axis rays cross d / cos(theta): 1 + 4e-7 at most
+    cam.use_sky = false;
+    cam.background = color(1, 1, 1);
+    auto pixels = cam.render(world, lights).radiance;
+
+    double worst = 0;
+    for (const auto& p : pixels)
+        for (int k = 0; k < 3; k++)
+            worst = std::fmax(worst, std::fabs(p[k] - std::exp(-sigma_a[k] * d)));
+    bool ok = worst < 1e-5;
+    std::cout << (ok ? "PASS " : "FAIL ") << name << ": worst channel off exp(-sigma_a d) by "
+              << worst << '\n';
+    return ok;
+}
+
 int main() {
     std::clog.setstate(std::ios::failbit);  // Silence render progress
 
@@ -86,6 +127,11 @@ int main() {
     ok &= furnace("white lambertian", furnace_sphere(std::make_shared<lambertian>(color(1, 1, 1))), 1e-6);
     ok &= furnace("perfect mirror", furnace_sphere(std::make_shared<metal>(color(1, 1, 1), 0.0)), 1e-6);
     ok &= furnace("clear glass", furnace_sphere(std::make_shared<dielectric>(1.5)), 0.02);
+    // Zero absorption must change nothing
+    ok &= furnace("clear glass, explicit zero absorption",
+                  furnace_sphere(std::make_shared<dielectric>(1.5, 0.0, color(0, 0, 0))), 0.02);
+    ok &= slab_transmittance("absorbing slab", false);
+    ok &= slab_transmittance("absorbing slab, scaled instance", true);
     // Light sampling makes this one noisy (not exact like pure BSDF sampling
     // of a constant sky), so the tolerance is looser
     ok &= furnace("white lambertian, environment map",
@@ -101,11 +147,16 @@ int main() {
                       std::make_shared<constant_medium>(boundary, 2.0, phase), 0.03);
     }
 
+    // Absorbing glass can only lose energy, smooth or rough (rough cases below)
+    ok &= bounded("absorbing glass", std::make_shared<dielectric>(1.5, 0.0, color(0.5, 0.2, 0.1)));
+
     auto white = std::make_shared<solid_color>(color(1, 1, 1));
     for (double roughness : {0.1, 0.5, 1.0}) {
         auto r = std::to_string(roughness).substr(0, 3);
         ok &= bounded("GGX metal, roughness " + r, std::make_shared<metal>(color(1, 1, 1), roughness));
         ok &= bounded("rough glass, roughness " + r, std::make_shared<dielectric>(1.5, roughness));
+        ok &= bounded("rough absorbing glass, roughness " + r,
+                      std::make_shared<dielectric>(1.5, roughness, color(0.5, 0.2, 0.1)));
         ok &= bounded("principled dielectric, roughness " + r,
                       std::make_shared<principled>(white, 0.0, roughness, 1.5));
         ok &= bounded("principled metallic, roughness " + r,

@@ -47,6 +47,15 @@ class material{
             (void)r_in; (void)rec;
             return color(0, 0, 0);
         }
+
+        // Fraction of the light carried along r that survives the segment
+        // ending at rec. Called for every hit; materials with an absorbing
+        // interior return less than 1 when the segment ran inside them, i.e.
+        // when rec is a back face. Everything else is clear (1).
+        virtual color interior_transmittance(const ray& r, const hit_record& rec) const {
+            (void)r; (void)rec;
+            return color(1, 1, 1);
+        }
 };
 
 class lambertian : public material{
@@ -122,11 +131,35 @@ class metal : public material{
 // Glass-like material. With roughness 0 it is perfectly smooth (specular
 // reflection and refraction); otherwise it uses GGX microfacet reflection and
 // transmission.
+//
+// absorption is the Beer-Lambert coefficient sigma_a (per unit length, per
+// channel): light that travels a distance d inside is scaled by
+// exp(-sigma_a d). 0 is perfectly clear glass. The surfaces themselves stay
+// white; the color comes from the volume, so thick parts look darker and more
+// saturated than thin ones.
 class dielectric : public material{
     public:
-        dielectric(double refraction_index, double roughness = 0)
+        dielectric(double refraction_index, double roughness = 0, const color& absorption = color(0, 0, 0))
             : refraction_index(refraction_index), roughness(std::clamp(roughness, 0.0, 1.0)),
-              alpha(roughness_to_alpha(this->roughness)) {}
+              alpha(roughness_to_alpha(this->roughness)), sigma_a(absorption) {}
+
+        // The absorption that gives transmittance tint (each channel in (0, 1])
+        // after a distance d: exp(-sigma_a d) = tint, so sigma_a = -ln(tint) / d.
+        static color absorption_for(const color& tint, double distance) {
+            return color(-std::log(tint.x()), -std::log(tint.y()), -std::log(tint.z())) / distance;
+        }
+
+        // A back face hit means the segment that just ended ran through the
+        // glass, whichever way the ray got in (refraction, total internal
+        // reflection, a camera inside). Its length is t |dir|: directions are
+        // not unit length, and instance::hit keeps t the same in both spaces,
+        // so this is the world-space distance.
+        color interior_transmittance(const ray& r, const hit_record& rec) const override {
+            if (rec.front_face || (sigma_a.x() == 0 && sigma_a.y() == 0 && sigma_a.z() == 0))
+                return color(1, 1, 1);
+            double d = rec.t * r.direction().length();
+            return color(std::exp(-sigma_a.x() * d), std::exp(-sigma_a.y() * d), std::exp(-sigma_a.z() * d));
+        }
 
         bool scatter(const ray& r_in, const hit_record& rec, scatter_record& srec) const override {
             if (roughness > 0) {
@@ -170,6 +203,7 @@ class dielectric : public material{
         double refraction_index;
         double roughness;
         double alpha;
+        color sigma_a;  // Absorption coefficient of the interior
 
         rough_dielectric_bsdf rough_bsdf(const ray& r_in, const hit_record& rec) const {
             // rec.normal faces the incoming ray; eta is far side over near side
