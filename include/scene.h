@@ -66,6 +66,14 @@ class scene{
 // can replace "color r g b", and "metallic texture <name>" and "roughness
 // texture <name>" read those from a texture's red channel at every hit:
 //   material worn   principled texture rust metallic texture rust_m roughness texture rust_r
+//
+// lambertian, metal and principled lines can end with a tangent-space normal
+// map (an RGB image texture, loaded linear; see normal_mapped in material.h):
+//   material bricks lambertian texture brick_color normal_map brick_normal
+//   material steel  metal 0.9 0.9 0.9 0.2 normal_map bumps
+//
+//   normal_maps  off           # ignore normal maps (normal_map and those of OBJ/MTL
+//                              # files) on the lines that follow; "on" is the default
 //   material lamp   emissive 15 15 15         # area light, radiance r g b
 //   material haze   volume 0.9 0.9 0.9 g 0.3  # for media: scattering albedo r g b,
 //                                             # optional Henyey-Greenstein g in (-1, 1)
@@ -196,6 +204,9 @@ inline bool load_scene(const std::string& path, scene& result) {
         return true;
     };
 
+    // Ignores normal maps after "normal_maps off", to compare renders
+    bool use_normal_maps = true;
+
     // Reads what may follow an object's geometry: an optional material name,
     // then any transforms, applied in the order given. Returns false with a
     // message in error on a problem.
@@ -293,7 +304,7 @@ inline bool load_scene(const std::string& path, scene& result) {
 
     // Meshes already loaded, by file and default material, so repeated
     // "mesh" lines share geometry and only add instances.
-    std::map<std::tuple<std::string, bool, const material*>, std::vector<obj_part>> mesh_cache;
+    std::map<std::tuple<std::string, bool, const material*, bool>, std::vector<obj_part>> mesh_cache;
 
     // Global fog, added once the whole scene (and so its extent) is known
     double fog_density = 0;
@@ -392,6 +403,11 @@ inline bool load_scene(const std::string& path, scene& result) {
             std::string name;
             if (!(in >> name) || !result.display.set_tonemapper(name))
                 return fail(line_number, "expected 'tonemap none|reinhard|aces'");
+        } else if (keyword == "normal_maps") {
+            std::string state;
+            if (!(in >> state) || (state != "on" && state != "off"))
+                return fail(line_number, "expected 'normal_maps on|off'");
+            use_normal_maps = state == "on";
         } else if (keyword == "texture") {
             std::string name, type;
             if (!(in >> name >> type))
@@ -436,6 +452,18 @@ inline bool load_scene(const std::string& path, scene& result) {
                 return fail(line_number, "expected 'material <name> <type> <parameters...>'");
 
             std::shared_ptr<material> mat;
+            std::shared_ptr<texture> normal_map;  // Optional, for lambertian, metal and principled
+            // An optional "normal_map <texture>" at the end of the line
+            auto read_normal_map = [&](std::string& error) {
+                std::string key;
+                if (!(in >> key))
+                    return true;
+                if (key != "normal_map") {
+                    error = "unexpected value '" + key + "' (expected 'normal_map <texture>')";
+                    return false;
+                }
+                return read_texture_name(in, normal_map, error);
+            };
             if (type == "lambertian") {
                 std::shared_ptr<texture> tex;
                 std::string first, error;
@@ -443,11 +471,16 @@ inline bool load_scene(const std::string& path, scene& result) {
                     return fail(line_number, error.empty()
                         ? "expected 'material <name> lambertian <r> <g> <b>' or '... lambertian texture <name>'"
                         : error);
+                if (!read_normal_map(error))
+                    return fail(line_number, error);
                 mat = std::make_shared<lambertian>(tex);
             } else if (type == "metal") {
                 double r, g, b, roughness;
+                std::string error;
                 if (!(in >> r >> g >> b >> roughness) || roughness < 0)
                     return fail(line_number, "expected 'material <name> metal <r> <g> <b> <roughness>'");
+                if (!read_normal_map(error))
+                    return fail(line_number, error);
                 mat = std::make_shared<metal>(color(r, g, b), roughness);
             } else if (type == "dielectric") {
                 double ior, roughness = 0;
@@ -473,9 +506,10 @@ inline bool load_scene(const std::string& path, scene& result) {
                         std::string first;
                         ok = bool(in >> first) && read_color_or_texture(in, first, base, error);
                     }
-                    else if (key == "metallic")  ok = read_value_or_texture(in, metallic, error);
-                    else if (key == "roughness") ok = read_value_or_texture(in, roughness, error);
-                    else if (key == "ior")       ok = bool(in >> ior) && ior > 0;
+                    else if (key == "metallic")   ok = read_value_or_texture(in, metallic, error);
+                    else if (key == "roughness")  ok = read_value_or_texture(in, roughness, error);
+                    else if (key == "ior")        ok = bool(in >> ior) && ior > 0;
+                    else if (key == "normal_map") ok = read_texture_name(in, normal_map, error);
                     else return fail(line_number, "unknown principled setting '" + key + "'");
                     if (!ok)
                         return fail(line_number, error.empty() ? "bad value for principled setting '" + key + "'" : error);
@@ -499,6 +533,8 @@ inline bool load_scene(const std::string& path, scene& result) {
             } else {
                 return fail(line_number, "unknown material type '" + type + "'");
             }
+            if (normal_map && use_normal_maps)
+                mat = std::make_shared<normal_mapped>(mat, normal_map);
             materials[name] = mat;
         } else if (keyword == "sphere" || keyword == "quad" || keyword == "box") {
             std::shared_ptr<hittable> object;
@@ -589,11 +625,11 @@ inline bool load_scene(const std::string& path, scene& result) {
             if (!read_tail(tail, mat, xform, transformed, error))
                 return fail(line_number, error);
 
-            auto key = std::make_tuple(file, smooth, mat.get());
+            auto key = std::make_tuple(file, smooth, mat.get(), use_normal_maps);
             auto cached = mesh_cache.find(key);
             if (cached == mesh_cache.end()) {
                 std::vector<obj_part> parts;
-                if (!load_obj(file, materials, mat, smooth, parts, error))
+                if (!load_obj(file, materials, mat, smooth, parts, error, use_normal_maps))
                     return fail(line_number, error);
                 size_t triangle_count = 0;
                 for (const auto& part : parts)

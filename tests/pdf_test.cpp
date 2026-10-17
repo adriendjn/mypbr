@@ -69,6 +69,29 @@ static double valid_fraction(const pdf& p) {
     return double(valid) / n;
 }
 
+// Hemispherical-directional reflectance of a material two ways, which agree
+// only if eval() is consistent with the scatter() pdf: E[eval / pdf] over
+// directions drawn from that pdf, and E[eval / uniform] over the sphere.
+// (Assumes the pdf is non-zero wherever eval is.)
+static void reflectance_two_ways(const material& m, const ray& r_in, const hit_record& rec,
+                                 double& from_pdf, double& from_uniform) {
+    const int n = 400000;
+    scatter_record srec;
+    m.scatter(r_in, rec, srec);
+    sphere_pdf uniform;
+    from_pdf = from_uniform = 0;
+    for (int i = 0; i < n; i++) {
+        vec3 d = srec.pdf_ptr->generate();
+        double v = srec.pdf_ptr->value(d);
+        if (d.length_squared() > 0 && v > 0)
+            from_pdf += m.eval(r_in, rec, d).x() / v;
+        vec3 e = uniform.generate();
+        from_uniform += m.eval(r_in, rec, e).x() / uniform.value(e);
+    }
+    from_pdf /= n;
+    from_uniform /= n;
+}
+
 static bool check(const std::string& name, double got, double want, double tolerance) {
     bool ok = std::fabs(got - want) < tolerance;
     std::cout << (ok ? "PASS " : "FAIL ") << name << ": " << got << " (expected " << want << ")\n";
@@ -146,6 +169,40 @@ int main() {
                 rough_dielectric_pdf glass(rough_dielectric_bsdf(normal, wo, eta, alpha));
                 ok &= check("rough glass pdf, roughness " + r + ", eta " + std::to_string(eta).substr(0, 4),
                             integral_defensive(glass), valid_fraction(glass), 0.02);
+            }
+        }
+    }
+
+    // Normal mapping: the sampling pdf must follow the perturbed normal, and
+    // eval() with it, even where the bent normal had to be pulled towards a
+    // grazing wo. A constant map tilts the normal 60 degrees towards +x.
+    {
+        hit_record rec;
+        rec.p = point3(0, 0, 0);
+        rec.normal = vec3(0, 0, 1);
+        rec.front_face = true;
+        rec.u = rec.v = 0.5;
+        rec.dpdu = vec3(2, 0, 0);
+        rec.dpdv = vec3(0, 3, 0);
+        double s = std::sin(pi / 3), c = std::cos(pi / 3);
+        auto tilt = std::make_shared<solid_color>(color(0.5 * s + 0.5, 0.5, 0.5 * c + 0.5));
+        auto white = std::make_shared<solid_color>(color(1, 1, 1));
+        struct named{ std::string name; std::shared_ptr<material> m; };
+        for (const auto& [name, inner] : {
+                 named{"lambertian", std::make_shared<lambertian>(color(1, 1, 1))},
+                 named{"GGX metal", std::make_shared<metal>(color(1, 1, 1), 0.5)},
+                 named{"principled", std::make_shared<principled>(white, 0.3, 0.4, 1.5)}}) {
+            normal_mapped m(inner, tilt);
+            // wo straight up, then tilted away from the bump: 70 degrees off the
+            // real normal is below the perturbed one, so the normal gets bent
+            for (vec3 wo : {vec3(0, 0, 1), unit_vector(vec3(-std::tan(70 * pi / 180), 0, 1))}) {
+                ray r_in(wo, -wo);
+                bool grazing = wo.x() < 0;
+                double from_pdf, from_uniform;
+                reflectance_two_ways(m, r_in, rec, from_pdf, from_uniform);
+                ok &= check("normal mapped " + name + (grazing ? ", bent for grazing wo" : "") + ": eval matches pdf",
+                            from_pdf, from_uniform, 0.02);
+                ok &= from_pdf <= 1.0 + 0.02;  // And never reflects more than arrives
             }
         }
     }

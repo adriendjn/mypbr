@@ -40,6 +40,16 @@ class mtl_material{
 //   Ni ior          index of refraction of that glossy layer (default 1.5)
 //   Ke r g b        emission               -> emissive (an area light)
 //   map_d file      alpha mask (its alpha channel, or grey level)
+//   norm file       tangent-space normal map (see normal_mapped in material.h)
+//   map_Bump file, bump file, map_Disp file, disp file
+//                   also read as a tangent-space normal map when the image
+//                   has color. Strictly these name height maps (bump: a
+//                   height whose gradient bends the normal; disp: a real
+//                   displacement), but many exporters put normal maps
+//                   there, and Crytek Sponza's map_Disp files (*_ddn.tga)
+//                   are RGB normal maps. A grey-scale image is a genuine
+//                   height map: height bump mapping and displacement are
+//                   not supported, so those are skipped.
 //
 // Without map_d, a diffuse texture's alpha channel is used as the mask, a
 // common convention (Sponza's plants and chains rely on it). The scalar "d"
@@ -48,11 +58,12 @@ class mtl_material{
 // Texture paths are relative to the MTL file; textures wrap around (repeat).
 // Options before a texture file (-s, -o, -bm, ...) are skipped by taking the
 // last word as the file name. A texture that cannot be loaded is reported on
-// std::clog and the material falls back to its plain color. Other statements
-// (Ka, illum, map_Bump, ...) are ignored. Returns false only if the file
-// cannot be opened.
+// std::clog and the material falls back to its plain color. Normal maps are
+// loaded as linear data, and left out without use_normal_maps (to compare).
+// Other statements (Ka, illum, ...) are ignored. Returns false only if the
+// file cannot be opened.
 inline bool load_mtl(const std::string& path, std::map<std::string, mtl_material>& result,
-                     std::string& error) {
+                     std::string& error, bool use_normal_maps = true) {
     std::ifstream file(path);
     if (!file) {
         error = "cannot open '" + path + "'";
@@ -61,26 +72,27 @@ inline bool load_mtl(const std::string& path, std::map<std::string, mtl_material
     auto slash = path.find_last_of('/');
     std::string dir = slash == std::string::npos ? "" : path.substr(0, slash + 1);
 
-    // Images shared between materials are loaded once
-    std::map<std::string, std::shared_ptr<image_texture>> images;
-    auto load_image = [&](const std::string& name) -> std::shared_ptr<image_texture> {
+    // Images shared between materials are loaded once (per decoding: colors
+    // as sRGB, normal maps as linear data)
+    std::map<std::pair<std::string, bool>, std::shared_ptr<image_texture>> images;
+    auto load_image = [&](const std::string& name, bool linear = false) -> std::shared_ptr<image_texture> {
         std::string full = name[0] == '/' ? name : dir + name;
-        auto it = images.find(full);
+        auto it = images.find({full, linear});
         if (it != images.end())
             return it->second;
-        auto image = std::make_shared<image_texture>(full, true);
+        auto image = std::make_shared<image_texture>(full, true, linear);
         if (!image->loaded()) {
             std::clog << "Warning: " << path << ": cannot load texture '" << full << "'\n";
             image = nullptr;
         }
-        images[full] = image;
+        images[{full, linear}] = image;
         return image;
     };
 
     struct entry{
         color kd{0.8, 0.8, 0.8}, ks{0, 0, 0}, ke{0, 0, 0};
         double ns = 0, ni = 1.5;
-        std::shared_ptr<image_texture> map_kd, map_d;
+        std::shared_ptr<image_texture> map_kd, map_d, normal_map;
     };
     std::vector<std::pair<std::string, entry>> entries;
 
@@ -120,6 +132,20 @@ inline bool load_mtl(const std::string& path, std::map<std::string, mtl_material
         else if (keyword == "Ni") in >> e.ni;
         else if (keyword == "map_Kd") { auto f = last_word(); if (!f.empty()) e.map_kd = load_image(f); }
         else if (keyword == "map_d")  { auto f = last_word(); if (!f.empty()) e.map_d = load_image(f); }
+        else if (keyword == "norm" || keyword == "map_Bump" || keyword == "map_bump"
+                 || keyword == "bump" || keyword == "map_Disp" || keyword == "disp") {
+            auto f = last_word();
+            if (f.empty() || !use_normal_maps)
+                continue;
+            auto image = load_image(f, true);
+            if (image && keyword != "norm" && image->greyscale()) {
+                std::clog << "Warning: " << path << ": '" << f << "' is a height map; "
+                          << "only normal maps are supported\n";
+                continue;
+            }
+            if (image)
+                e.normal_map = image;
+        }
     }
 
     for (auto& [name, e] : entries) {
@@ -137,6 +163,8 @@ inline bool load_mtl(const std::string& path, std::map<std::string, mtl_material
         } else {
             m.mat = std::make_shared<lambertian>(base);
         }
+        if (e.normal_map && e.ke.length_squared() == 0)
+            m.mat = std::make_shared<normal_mapped>(m.mat, e.normal_map);
 
         if (e.map_d && !e.map_d->fully_opaque())
             m.alpha_mask = e.map_d;
@@ -159,10 +187,11 @@ inline bool load_mtl(const std::string& path, std::map<std::string, mtl_material
 //
 // With smooth set, a file without vertex normals gets area-weighted averages
 // of the face normals around each vertex, for smooth shading of scans.
+// use_normal_maps is passed on to load_mtl.
 inline bool load_obj(const std::string& path,
                      const std::map<std::string, std::shared_ptr<material>>& materials,
                      std::shared_ptr<material> default_mat, bool smooth,
-                     std::vector<obj_part>& parts, std::string& error) {
+                     std::vector<obj_part>& parts, std::string& error, bool use_normal_maps = true) {
     std::ifstream file(path);
     if (!file) {
         error = "cannot open '" + path + "'";
@@ -272,7 +301,7 @@ inline bool load_obj(const std::string& path,
             std::istringstream names(argument(s + 6));
             std::string name, mtl_error;
             while (names >> name)
-                if (!load_mtl(name[0] == '/' ? name : dir + name, file_materials, mtl_error))
+                if (!load_mtl(name[0] == '/' ? name : dir + name, file_materials, mtl_error, use_normal_maps))
                     std::clog << "Warning: " << path << ": " << mtl_error << '\n';
         }
     }
