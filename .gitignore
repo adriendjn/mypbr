@@ -6,3 +6,4 @@ build/
 /*.pfm
 models/external/
 __pycache__/
+out/
