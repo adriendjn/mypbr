@@ -3,6 +3,7 @@
 
 #include "atmosphere.h"
 #include "camera.h"
+#include "gltf_loader.h"
 #include "hittable_list.h"
 #include "instance.h"
 #include "light_list.h"
@@ -146,6 +147,11 @@ class scene{
 //                                                     # to the scene file; smooth
 //                                                     # makes vertex normals if the
 //                                                     # file has none
+//   mesh   models/car.glb  [material]                 # glTF 2.0 (.gltf or .glb) with
+//                                                     # its own PBR materials (see
+//                                                     # gltf_loader.h); a material
+//                                                     # given here replaces all of
+//                                                     # them (clay render)
 //
 //   vox    models/island.vox  [quads] [emission 1]    # MagicaVoxel model or scene:
 //                                                     # every model the file's scene
@@ -969,12 +975,25 @@ inline bool load_scene(const std::string& path, scene& result) {
             auto cached = mesh_cache.find(key);
             if (cached == mesh_cache.end()) {
                 std::vector<obj_part> parts;
-                if (!load_obj(file, materials, mat, smooth, parts, error, use_normal_maps))
+                auto ends_with = [&](const std::string& suffix) {
+                    return file.size() >= suffix.size()
+                        && file.compare(file.size() - suffix.size(), suffix.size(), suffix) == 0;
+                };
+                bool gltf = ends_with(".gltf") || ends_with(".glb");
+                aabb bounds;
+                // glTF files bring their own materials: one named on the line replaces them all
+                auto override_mat = mat == default_material ? nullptr : mat;
+                if (gltf ? !load_gltf(file, override_mat, parts, bounds, error, use_normal_maps)
+                         : !load_obj(file, materials, mat, smooth, parts, error, use_normal_maps))
                     return fail(line_number, error);
                 size_t triangle_count = 0;
                 for (const auto& part : parts)
                     triangle_count += part.geometry->size();
-                std::clog << "Loaded " << file << ": " << triangle_count << " triangles\n";
+                std::clog << "Loaded " << file << ": " << triangle_count << " triangles";
+                if (gltf)  // Where the model sits, to place the camera and the ground
+                    std::clog << ", bounds " << bounds.x.min << ' ' << bounds.y.min << ' ' << bounds.z.min
+                              << " to " << bounds.x.max << ' ' << bounds.y.max << ' ' << bounds.z.max;
+                std::clog << '\n';
                 cached = mesh_cache.emplace(key, std::move(parts)).first;
             }
             for (const auto& part : cached->second)

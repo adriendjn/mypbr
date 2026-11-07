@@ -152,6 +152,17 @@ From the analysis "Making mypbr look like MagicaVoxel": the look comes from flat
 
 Renders: `renders/13-*.png`. Not done: rOBJ/rCAM import (a .vox file's own render settings and camera), cloud/media voxels, multiple scattering in the sky.
 
+## 14. Cars (in progress)
+
+From the analysis "Car render styles for mypbr": a car is read through its reflections, so the work is car paint,
+studio lighting and getting real car models in.
+
+- ✓ glTF 2.0 loader (cgltf): meshes, node transforms, metallic-roughness materials with their textures, normal
+  maps, emission, KHR_texture_transform, KHR_materials_transmission as thin glass (`thin_dielectric`).
+- ✓ `scenes/car_hdri.scene` and `scenes/car_clay.scene` with the Khronos Car Concept model (`tools/fetch_models.sh`).
+- Clear-coat car paint (a second GGX layer on `principled`, KHR_materials_clearcoat), validated against Mitsuba.
+- Metallic flakes, studio lighting (camera-invisible lights, cyclorama), shadow catcher, spot lights.
+
 ## Next ideas
 
 - Extend the Mitsuba validation to textures, normal maps, fog and meshes.

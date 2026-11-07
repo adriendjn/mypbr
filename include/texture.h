@@ -70,31 +70,28 @@ class image_texture : public texture{
         explicit image_texture(const std::string& path, bool repeat = false, bool linear = false)
             : repeat(repeat), linear(linear) {
             if (stbi_is_hdr(path.c_str())) {
-                float* data = stbi_loadf(path.c_str(), &width, &height, nullptr, 3);
-                if (!data)
-                    return;
-                hdr_pixels.assign(data, data + size_t(width) * height * 3);
-                stbi_image_free(data);
+                int w, h;
+                float* data = stbi_loadf(path.c_str(), &w, &h, nullptr, 3);
+                take_hdr(data, w, h);
             } else {
-                // Kept as bytes, 4 per pixel, and decoded on lookup: a large
-                // textured model would need gigabytes as doubles.
-                int channels;
-                unsigned char* data = stbi_load(path.c_str(), &width, &height, &channels, 4);
-                if (!data)
-                    return;
-                ldr_pixels.assign(data, data + size_t(width) * height * 4);
-                stbi_image_free(data);
-                // Grey and grey+alpha images have 1 and 2 channels
-                alpha_channel = channels == 2 || channels == 4;
-                mask_offset = alpha_channel ? 3 : 0;
-                for (size_t k = mask_offset; k < ldr_pixels.size(); k += 4)
-                    if (ldr_pixels[k] < 255) {
-                        opaque = false;
-                        break;
-                    }
-                grey = channels <= 2;
-                for (size_t k = 0; grey && k < ldr_pixels.size(); k += 4)
-                    grey = ldr_pixels[k] == ldr_pixels[k + 1] && ldr_pixels[k] == ldr_pixels[k + 2];
+                int w, h, channels;
+                unsigned char* data = stbi_load(path.c_str(), &w, &h, &channels, 4);
+                take_ldr(data, w, h, channels);
+            }
+        }
+
+        // Decodes an image file held in memory (a PNG or JPEG inside a .glb).
+        image_texture(const unsigned char* bytes, size_t size, bool repeat, bool linear)
+            : repeat(repeat), linear(linear) {
+            int length = int(size);
+            if (stbi_is_hdr_from_memory(bytes, length)) {
+                int w, h;
+                float* data = stbi_loadf_from_memory(bytes, length, &w, &h, nullptr, 3);
+                take_hdr(data, w, h);
+            } else {
+                int w, h, channels;
+                unsigned char* data = stbi_load_from_memory(bytes, length, &w, &h, &channels, 4);
+                take_ldr(data, w, h, channels);
             }
         }
 
@@ -140,6 +137,37 @@ class image_texture : public texture{
         std::vector<float> hdr_pixels;          // RGB, linear
 
         // Nearest pixel to (u, v), as an index into the pixel arrays.
+        void take_hdr(float* data, int w, int h) {
+            if (!data)
+                return;
+            width = w;
+            height = h;
+            hdr_pixels.assign(data, data + size_t(width) * height * 3);
+            stbi_image_free(data);
+        }
+
+        // Kept as bytes, 4 per pixel, and decoded on lookup: a large textured
+        // model would need gigabytes as doubles.
+        void take_ldr(unsigned char* data, int w, int h, int channels) {
+            if (!data)
+                return;
+            width = w;
+            height = h;
+            ldr_pixels.assign(data, data + size_t(width) * height * 4);
+            stbi_image_free(data);
+            // Grey and grey+alpha images have 1 and 2 channels
+            alpha_channel = channels == 2 || channels == 4;
+            mask_offset = alpha_channel ? 3 : 0;
+            for (size_t k = mask_offset; k < ldr_pixels.size(); k += 4)
+                if (ldr_pixels[k] < 255) {
+                    opaque = false;
+                    break;
+                }
+            grey = channels <= 2;
+            for (size_t k = 0; grey && k < ldr_pixels.size(); k += 4)
+                grey = ldr_pixels[k] == ldr_pixels[k + 1] && ldr_pixels[k] == ldr_pixels[k + 2];
+        }
+
         size_t pixel_index(double u, double v) const {
             if (repeat) {
                 u -= std::floor(u);
@@ -168,6 +196,79 @@ class image_texture : public texture{
             }();
             return table;
         }
+};
+
+// A texture multiplied by a constant color (glTF's factor x texture).
+class scaled_texture : public texture{
+    public:
+        scaled_texture(std::shared_ptr<texture> inner, const color& scale) : inner(inner), scale(scale) {}
+
+        color value(double u, double v, const point3& p) const override {
+            return scale * inner->value(u, v, p);
+        }
+
+    private:
+        std::shared_ptr<texture> inner;
+        color scale;
+};
+
+// One channel of a texture (0 red, 1 green, 2 blue) times a factor, as a grey
+// color: glTF packs roughness in green and metallic in blue of one image,
+// while principled reads its maps' red channel.
+class channel_texture : public texture{
+    public:
+        channel_texture(std::shared_ptr<texture> inner, int channel, double scale)
+            : inner(inner), channel(channel), scale(scale) {}
+
+        color value(double u, double v, const point3& p) const override {
+            double x = scale * inner->value(u, v, p)[channel];
+            return color(x, x, x);
+        }
+
+    private:
+        std::shared_ptr<texture> inner;
+        int channel;
+        double scale;
+};
+
+// Moves the (u, v) of the lookups into a texture: scale, then rotate, then
+// offset, as glTF's KHR_texture_transform does in its own coordinates, where
+// v runs down the image (ours runs up, hence the flips around it). Tiling a
+// small detail map over a large part, such as orange peel on car paint.
+class uv_transform_texture : public texture{
+    public:
+        uv_transform_texture(std::shared_ptr<texture> inner, double offset_u, double offset_v,
+                             double rotation, double scale_u, double scale_v)
+            : inner(inner), offset_u(offset_u), offset_v(offset_v), scale_u(scale_u), scale_v(scale_v),
+              cos_r(std::cos(rotation)), sin_r(std::sin(rotation)) {}
+
+        color value(double u, double v, const point3& p) const override {
+            double su = scale_u * u, sv = scale_v * (1 - v);
+            double tu = cos_r * su + sin_r * sv + offset_u;
+            double tv = -sin_r * su + cos_r * sv + offset_v;
+            return inner->value(tu, 1 - tv, p);
+        }
+
+    private:
+        std::shared_ptr<texture> inner;
+        double offset_u, offset_v, scale_u, scale_v, cos_r, sin_r;
+};
+
+// A tangent-space normal map with its tilt scaled (glTF's normalTexture.scale):
+// the encoded normal 2c - 1 becomes (s x, s y, z), still encoded as a color.
+// normal_mapped normalizes it, so s < 1 flattens the bumps.
+class normal_scale_texture : public texture{
+    public:
+        normal_scale_texture(std::shared_ptr<texture> inner, double scale) : inner(inner), scale(scale) {}
+
+        color value(double u, double v, const point3& p) const override {
+            color c = inner->value(u, v, p);
+            return color(0.5 + scale * (c.x() - 0.5), 0.5 + scale * (c.y() - 0.5), c.z());
+        }
+
+    private:
+        std::shared_ptr<texture> inner;
+        double scale;
 };
 
 #endif

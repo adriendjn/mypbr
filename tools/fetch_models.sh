@@ -1,6 +1,7 @@
 #!/bin/sh
 # Downloads the large test meshes used by scenes/bunny_cornell.scene and
-# scenes/sponza.scene, and the MagicaVoxel models of scenes/vox_*.scene,
+# scenes/sponza.scene, the MagicaVoxel models of scenes/vox_*.scene and the
+# glTF cars of scenes/car_*.scene,
 # into models/external/ (ignored by git). The URLs are
 # pinned to fixed commits so the files never change under the scenes.
 set -e
@@ -50,3 +51,10 @@ fetch monu1.vox "$VOX/monument/monu1.vox"
 fetch monu10.vox "$VOX/monument/monu10.vox"
 fetch teapot.vox "$VOX/scan/teapot.vox"
 fetch chr_knight.vox "$VOX/character/chr_knight.vox"
+
+# glTF cars from the Khronos glTF sample assets, for scenes/car_*.scene:
+# CarConcept (CC-BY 4.0, Eric Chadwick, Darmstadt Graphics Group, from a CC0
+# model by Unity Fan) and ToyCar (CC0, Guido Odendahl and Eric Chadwick)
+GLTF=https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/8f492390ddc7a2ae221a1369ef560589cf8c70fb/Models
+fetch CarConcept.glb "$GLTF/CarConcept/glTF-Binary/CarConcept.glb"
+fetch ToyCar.glb "$GLTF/ToyCar/glTF-Binary/ToyCar.glb"

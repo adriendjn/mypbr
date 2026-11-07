@@ -14,7 +14,7 @@ option(MYPBR_NATIVE "Compile with -march=native" ON)
 
 find_package(Threads REQUIRED)
 
-# Third-party single-header libraries (stb), compiled once. SYSTEM keeps
+# Third-party single-header libraries (stb, cgltf), compiled once. SYSTEM keeps
 # their warnings out of our build.
 add_library(stb STATIC src/stb_impl.cpp)
 target_include_directories(stb SYSTEM PUBLIC external)
