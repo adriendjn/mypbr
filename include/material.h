@@ -251,8 +251,53 @@ class dielectric : public material{
         }
 };
 
+// The shading normal a tangent-space normal map gives at rec: an RGB texture
+// (loaded as linear data) whose texel c encodes the normal 2c - 1 in the
+// frame (T, B, N), where N is the surface's outward normal, T is dp/du made
+// perpendicular to N (Gram-Schmidt) and B = N x T, flipped to follow dp/dv
+// where the uvs are mirrored. Red is along +u, green along +v (the OpenGL
+// convention, v = 0 at the bottom of the image) and blue out of the surface.
+// The result is on the incoming ray's side, like rec.normal.
+//
+// Seen at a grazing angle, a texel tilted away from the viewer would put wo
+// under its own surface, where a BSDF is black (dark speckles along
+// silhouettes). The normal is then bent towards wo just enough to make
+// dot(n, wo) = min_cos_o (before normalizing), a small rotation in the plane
+// of n and wo that leaves every other texel alone.
+//
+// Surfaces without tangents (dpdu zero, e.g. sphere poles or degenerate uvs)
+// keep rec.normal.
+inline vec3 normal_from_map(const ray& r_in, const hit_record& rec, const texture& normal_map) {
+    // Smallest cosine allowed between the shading normal and wo
+    constexpr double min_cos_o = 0.01;
+
+    vec3 n = rec.front_face ? rec.normal : -rec.normal;  // Outward
+    vec3 t = rec.dpdu - dot(rec.dpdu, n) * n;
+    // Relative test: dp/du scales with the object, from millimeters to kilometers
+    if (t.length_squared() <= 1e-12 * rec.dpdu.length_squared())
+        return rec.normal;
+    t = unit_vector(t);
+    vec3 b = cross(n, t);
+    if (dot(b, rec.dpdv) < 0)
+        b = -b;  // Mirrored uvs: v runs the other way
+
+    color c = normal_map.value(rec.u, rec.v, rec.p);
+    // Blue below 0.5 would point into the surface: keep it just above
+    double nz = std::fmax(2 * c.z() - 1, 1e-3);
+    vec3 m = unit_vector((2 * c.x() - 1) * t + (2 * c.y() - 1) * b + nz * n);
+    if (!rec.front_face)
+        m = -m;  // Back to the incoming ray's side
+
+    vec3 wo = unit_vector(-r_in.direction());
+    double cos_o = dot(m, wo);
+    if (cos_o < min_cos_o)
+        m = unit_vector(m + (min_cos_o - cos_o) * wo);
+    return m;
+}
+
 // A "standard surface" style material: a diffuse base under a GGX specular
-// layer, blended towards a pure conductor by metallic.
+// layer, blended towards a pure conductor by metallic, with an optional
+// clear coat on top.
 //
 // The specular layer's normal-incidence reflectance is that of a dielectric
 // with the given ior (about 4% for 1.5), or the base color when metallic.
@@ -265,6 +310,27 @@ class dielectric : public material{
 // Metallic and roughness can vary over the surface: they are read from the
 // red channel of a texture (load image maps as linear data) at every hit,
 // clamped to [0, 1]. Constants are solid textures.
+//
+// Clear coat (set_clearcoat): a thin layer of varnish, as on car paint or
+// lacquered wood, with its own roughness (usually near 0, a sharp
+// reflection) and its own normal. It is a dielectric of ior 1.5 (f0 = 4%),
+// colorless, of weight w in [0, 1] (glTF's KHR_materials_clearcoat):
+//
+//   f cos_i = w F_c(i.h) D G / (4 cos_o)                  coat, GGX, normal n_c
+//           + (1 - w F_c(cos_o)) (1 - w F_c(cos_i)) f_base cos_i
+//
+// Like the diffuse base under the specular layer, everything below only gets
+// the light the coat lets through, once on the way in and once on the way
+// out, so adding a coat never adds energy: at normal incidence it takes 4%
+// of the light into its own sharp lobe and leaves the rest 92% (96% twice),
+// and at grazing angles F_c climbs and the coat takes over (the bright sky
+// reflection along a car's flanks). Light that bounces between the coat and
+// the base is dropped, a few percent at most.
+//
+// Normal maps (set_normal_map, set_clearcoat's coat_normals) bend the base
+// and the coat apart, which a normal_mapped wrapper can't: wrapping would
+// bend both. As in normal_mapped, a direction below the unperturbed surface
+// (rec.normal) is black, and the pdf stays consistent with eval for MIS.
 class principled : public material{
     public:
         principled(std::shared_ptr<texture> base_color, double metallic, double roughness, double ior)
@@ -279,10 +345,25 @@ class principled : public material{
             dielectric_f0 = r0 * r0;
         }
 
+        // A tangent-space normal map for the base (not the coat). nullptr removes it.
+        void set_normal_map(std::shared_ptr<texture> normals) { normal_map = normals; }
+
+        // Adds a clear coat of weight w and roughness (red channels, clamped
+        // to [0, 1]) and an optional normal map of its own. A null weight
+        // removes it.
+        void set_clearcoat(std::shared_ptr<texture> weight, std::shared_ptr<texture> roughness,
+                           std::shared_ptr<texture> coat_normals = nullptr) {
+            coat_map = weight;
+            coat_roughness_map = roughness ? roughness : std::make_shared<solid_color>(color(0, 0, 0));
+            coat_normal_map = coat_normals;
+        }
+
         bool scatter(const ray& r_in, const hit_record& rec, scatter_record& srec) const override {
+            vec3 wo = unit_vector(-r_in.direction());
+            vec3 n_base = normal_map ? normal_from_map(r_in, rec, *normal_map) : rec.normal;
             double metallic = metallic_at(rec), alpha = alpha_at(rec);
             color base = base_color->value(rec.u, rec.v, rec.p);
-            double cos_o = std::fmax(0.0, dot(rec.normal, unit_vector(-r_in.direction())));
+            double cos_o = std::fmax(0.0, dot(n_base, wo));
 
             // Pick the specular lobe in proportion to its estimated share of the reflected light
             double spec_weight = average(fresnel_schlick(cos_o, specular_f0(base, metallic)));
@@ -292,18 +373,77 @@ class principled : public material{
             double p_spec = spec_weight + diff_weight > 0 ? spec_weight / (spec_weight + diff_weight) : 1;
             p_spec = std::clamp(p_spec, 0.1, 1.0);
 
-            auto spec = std::make_shared<ggx_reflection_pdf>(rec.normal, -r_in.direction(), alpha);
-            auto diff = std::make_shared<cosine_pdf>(rec.normal);
+            auto spec = std::make_shared<ggx_reflection_pdf>(n_base, wo, alpha);
+            auto diff = std::make_shared<cosine_pdf>(n_base);
+            std::shared_ptr<pdf> base_pdf = std::make_shared<mixture_pdf>(spec, diff, p_spec);
             srec.attenuation = base;
-            srec.pdf_ptr = std::make_shared<mixture_pdf>(spec, diff, p_spec);
+            srec.pdf_ptr = base_pdf;
             srec.skip_pdf = false;
+
+            double w = coat_at(rec);
+            if (w > 0) {
+                // The coat's sharp lobe gets its share of the samples: w F_c of the
+                // light against what the coat lets through to the layers below
+                vec3 n_coat = coat_normal(r_in, rec);
+                double coat_weight = w * fresnel_schlick(dot(n_coat, wo), coat_f0);
+                double below = (1 - coat_weight) * (spec_weight + diff_weight);
+                double p_coat = std::clamp(coat_weight / (coat_weight + below), 0.1, 0.9);
+                auto coat = std::make_shared<ggx_reflection_pdf>(n_coat, wo, coat_alpha_at(rec));
+                srec.pdf_ptr = std::make_shared<mixture_pdf>(coat, base_pdf, p_coat);
+            }
             return true;
         }
 
         color eval(const ray& r_in, const hit_record& rec, const vec3& direction) const override {
-            onb frame(rec.normal);
-            vec3 wo = unit_vector(frame.to_local(-r_in.direction()));
-            vec3 wi = unit_vector(frame.to_local(direction));
+            // rec.normal is the unperturbed normal, on the side of the incoming ray:
+            // a bent normal must not let light leak through the surface
+            if (dot(direction, rec.normal) <= 0)
+                return color(0, 0, 0);
+            vec3 wo = unit_vector(-r_in.direction());
+            vec3 wi = unit_vector(direction);
+            vec3 n_base = normal_map ? normal_from_map(r_in, rec, *normal_map) : rec.normal;
+            color below = base_eval(rec, n_base, wo, wi);
+
+            double w = coat_at(rec);
+            if (w <= 0)
+                return below;
+
+            // The coat: a colorless GGX reflection, and what it lets through twice
+            vec3 n_coat = coat_normal(r_in, rec);
+            double cos_o = dot(n_coat, wo), cos_i = dot(n_coat, wi);
+            double through = (1 - w * fresnel_schlick(cos_o, coat_f0)) * (1 - w * fresnel_schlick(cos_i, coat_f0));
+            color result = through * below;
+            if (cos_o > 0 && cos_i > 0) {
+                onb frame(n_coat);
+                vec3 lo = unit_vector(frame.to_local(wo)), li = unit_vector(frame.to_local(wi));
+                vec3 h = unit_vector(lo + li);
+                double alpha = coat_alpha_at(rec);
+                ggx dist(alpha);
+                double coat = fresnel_schlick(dot(li, h), coat_f0) * dist.D(h) * dist.G(lo, li) / (4 * lo.z());
+                coat += ggx_ms_term(lo.z(), li.z(), alpha, color(coat_f0, coat_f0, coat_f0)).x();
+                result += color(w * coat, w * coat, w * coat);
+            }
+            return result;
+        }
+
+    private:
+        std::shared_ptr<texture> base_color;
+        std::shared_ptr<texture> metallic_map;
+        std::shared_ptr<texture> roughness_map;
+        std::shared_ptr<texture> normal_map;          // Base only; may be null
+        std::shared_ptr<texture> coat_map;            // Coat weight; null: no coat
+        std::shared_ptr<texture> coat_roughness_map;
+        std::shared_ptr<texture> coat_normal_map;     // May be null
+        double dielectric_f0;
+
+        static constexpr double coat_f0 = 0.04;  // ior 1.5
+
+        // The base layers (specular over diffuse) with normal n, for unit
+        // directions wo and wi (world space)
+        color base_eval(const hit_record& rec, const vec3& n, const vec3& wo_world, const vec3& wi_world) const {
+            onb frame(n);
+            vec3 wo = unit_vector(frame.to_local(wo_world));
+            vec3 wi = unit_vector(frame.to_local(wi_world));
             if (wo.z() <= 0 || wi.z() <= 0)
                 return color(0, 0, 0);
 
@@ -322,12 +462,6 @@ class principled : public material{
             return specular + diffuse;
         }
 
-    private:
-        std::shared_ptr<texture> base_color;
-        std::shared_ptr<texture> metallic_map;
-        std::shared_ptr<texture> roughness_map;
-        double dielectric_f0;
-
         double metallic_at(const hit_record& rec) const {
             return std::clamp(metallic_map->value(rec.u, rec.v, rec.p).x(), 0.0, 1.0);
         }
@@ -335,6 +469,18 @@ class principled : public material{
         // GGX alpha at the hit, from the roughness there
         double alpha_at(const hit_record& rec) const {
             return roughness_to_alpha(std::clamp(roughness_map->value(rec.u, rec.v, rec.p).x(), 0.0, 1.0));
+        }
+
+        double coat_at(const hit_record& rec) const {
+            return coat_map ? std::clamp(coat_map->value(rec.u, rec.v, rec.p).x(), 0.0, 1.0) : 0.0;
+        }
+
+        double coat_alpha_at(const hit_record& rec) const {
+            return roughness_to_alpha(std::clamp(coat_roughness_map->value(rec.u, rec.v, rec.p).x(), 0.0, 1.0));
+        }
+
+        vec3 coat_normal(const ray& r_in, const hit_record& rec) const {
+            return coat_normal_map ? normal_from_map(r_in, rec, *coat_normal_map) : rec.normal;
         }
 
         color specular_f0(const color& base, double metallic) const {
@@ -362,37 +508,20 @@ class diffuse_light : public material{
         color emit;
 };
 
-// Wraps a material with a tangent-space normal map: an RGB texture (loaded
-// as linear data) whose texel c encodes the normal 2c - 1 in the frame
-// (T, B, N), where N is the surface's outward shading normal, T is dp/du made
-// perpendicular to N (Gram-Schmidt) and B = N x T, flipped to follow dp/dv
-// where the uvs are mirrored. Red is along +u, green along +v (the OpenGL
-// convention, v = 0 at the bottom of the image) and blue out of the surface.
-// The inner material sees the perturbed normal as rec.normal; the geometry,
-// front_face and the hit point are unchanged, and so is light sampling,
-// which never looks at materials.
+// Wraps a material with a tangent-space normal map (see normal_from_map for
+// the encoding and the grazing-view fix). The inner material sees the
+// perturbed normal as rec.normal; the geometry, front_face and the hit point
+// are unchanged, and so is light sampling, which never looks at materials.
+// Meant for the reflective materials (lambertian, metal); principled bends
+// its own normals (set_normal_map), so that a coat can keep its own.
 //
-// A bent normal can disagree with the real surface, so two edge cases are
-// handled here, for the reflective materials this is meant for (lambertian,
-// metal, principled):
-//
-//   - wo below the shading normal: seen at a grazing angle, a texel tilted
-//     away from the viewer would put wo under its own surface, where a
-//     BSDF is black (dark speckles along silhouettes). The normal is bent
-//     towards wo just enough to make dot(n, wo) = min_cos_o (before
-//     normalizing), a small rotation in the plane of n and wo that leaves
-//     every other texel alone.
-//   - wi below the real surface: a direction above the shading normal but
-//     below the unperturbed one (the geometric normal, or the interpolated
-//     one on smooth meshes) would leak light through the surface. eval()
-//     returns black there, for light samples and BSDF samples alike, which
-//     is the BSDF times an indicator: still consistent with the inner pdf
-//     for MIS, just not normalized to it. A perfect mirror's delta ray that
-//     goes below is mirrored back above the real surface instead (keeps the
-//     energy; slightly biased direction).
-//
-// Surfaces without tangents (dpdu zero, e.g. sphere poles or degenerate
-// uvs) are shaded with the unperturbed normal.
+// A direction above the shading normal but below the unperturbed one (the
+// geometric normal, or the interpolated one on smooth meshes) would leak
+// light through the surface. eval() returns black there, for light samples
+// and BSDF samples alike, which is the BSDF times an indicator: still
+// consistent with the inner pdf for MIS, just not normalized to it. A perfect
+// mirror's delta ray that goes below is mirrored back above the real surface
+// instead (keeps the energy; slightly biased direction).
 class normal_mapped : public material{
     public:
         normal_mapped(std::shared_ptr<material> inner, std::shared_ptr<texture> normal_map)
@@ -430,34 +559,10 @@ class normal_mapped : public material{
         std::shared_ptr<material> inner;
         std::shared_ptr<texture> normal_map;
 
-        // Smallest cosine allowed between the shading normal and wo
-        static constexpr double min_cos_o = 0.01;
-
         // A copy of rec with the normal map applied to its normal.
         hit_record perturbed(const ray& r_in, const hit_record& rec) const {
             hit_record shaded = rec;
-            vec3 n = rec.front_face ? rec.normal : -rec.normal;  // Outward
-            vec3 t = rec.dpdu - dot(rec.dpdu, n) * n;
-            // Relative test: dp/du scales with the object, from millimeters to kilometers
-            if (t.length_squared() <= 1e-12 * rec.dpdu.length_squared())
-                return shaded;
-            t = unit_vector(t);
-            vec3 b = cross(n, t);
-            if (dot(b, rec.dpdv) < 0)
-                b = -b;  // Mirrored uvs: v runs the other way
-
-            color c = normal_map->value(rec.u, rec.v, rec.p);
-            // Blue below 0.5 would point into the surface: keep it just above
-            double nz = std::fmax(2 * c.z() - 1, 1e-3);
-            vec3 m = unit_vector((2 * c.x() - 1) * t + (2 * c.y() - 1) * b + nz * n);
-            if (!rec.front_face)
-                m = -m;  // Back to the incoming ray's side
-
-            vec3 wo = unit_vector(-r_in.direction());
-            double cos_o = dot(m, wo);
-            if (cos_o < min_cos_o)
-                m = unit_vector(m + (min_cos_o - cos_o) * wo);
-            shaded.normal = m;
+            shaded.normal = normal_from_map(r_in, rec, *normal_map);
             return shaded;
         }
 };

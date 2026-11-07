@@ -99,6 +99,13 @@ class scene{
 // texture <name>" read those from a texture's red channel at every hit:
 //   material worn   principled texture rust metallic texture rust_m roughness texture rust_r
 //
+// and a clear coat (varnish: a colorless ior 1.5 layer on top, with its own
+// sharp reflection) of weight 0..1, roughness (default 0) and normal map:
+//   material paint  principled color 0.6 0 0 metallic 1 roughness 0.3 clearcoat 1
+//   material peel   principled color 0.6 0 0 clearcoat 1 clearcoat_roughness 0.03 clearcoat_normal_map ripples
+// (clearcoat and clearcoat_roughness also take "texture <name>", red channel).
+// A principled normal_map bends the base only, under the coat.
+//
 // lambertian, metal and principled lines can end with a tangent-space normal
 // map (an RGB image texture, loaded linear; see normal_mapped in material.h):
 //   material bricks lambertian texture brick_color normal_map brick_normal
@@ -753,6 +760,7 @@ inline bool load_scene(const std::string& path, scene& result) {
                 std::shared_ptr<texture> base = std::make_shared<solid_color>(color(0.8, 0.8, 0.8));
                 std::shared_ptr<texture> metallic = std::make_shared<solid_color>(color(0, 0, 0));
                 std::shared_ptr<texture> roughness = std::make_shared<solid_color>(color(0.5, 0.5, 0.5));
+                std::shared_ptr<texture> coat, coat_roughness, coat_normals;  // No coat unless given
                 double ior = 1.5;
                 std::string key, error;
                 while (in >> key) {
@@ -767,11 +775,23 @@ inline bool load_scene(const std::string& path, scene& result) {
                     else if (key == "roughness")  ok = read_value_or_texture(in, roughness, error);
                     else if (key == "ior")        ok = bool(in >> ior) && ior > 0;
                     else if (key == "normal_map") ok = read_texture_name(in, normal_map, error);
+                    else if (key == "clearcoat")  ok = read_value_or_texture(in, coat, error);
+                    else if (key == "clearcoat_roughness") ok = read_value_or_texture(in, coat_roughness, error);
+                    else if (key == "clearcoat_normal_map") ok = read_texture_name(in, coat_normals, error);
                     else return fail(line_number, "unknown principled setting '" + key + "'");
                     if (!ok)
                         return fail(line_number, error.empty() ? "bad value for principled setting '" + key + "'" : error);
                 }
-                mat = std::make_shared<principled>(base, metallic, roughness, ior);
+                if ((coat_roughness || coat_normals) && !coat)
+                    return fail(line_number, "clearcoat_roughness and clearcoat_normal_map need 'clearcoat <weight>'");
+                auto p = std::make_shared<principled>(base, metallic, roughness, ior);
+                // principled bends its own normals, so that the coat keeps its own
+                if (use_normal_maps)
+                    p->set_normal_map(normal_map);
+                normal_map = nullptr;
+                if (coat)
+                    p->set_clearcoat(coat, coat_roughness, use_normal_maps ? coat_normals : nullptr);
+                mat = p;
             } else if (type == "volume") {
                 double r, g, b, aniso = 0;
                 std::string key;
