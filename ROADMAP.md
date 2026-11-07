@@ -160,7 +160,9 @@ studio lighting and getting real car models in.
 - ✓ glTF 2.0 loader (cgltf): meshes, node transforms, metallic-roughness materials with their textures, normal
   maps, emission, KHR_texture_transform, KHR_materials_transmission as thin glass (`thin_dielectric`).
 - ✓ `scenes/car_hdri.scene` and `scenes/car_clay.scene` with the Khronos Car Concept model (`tools/fetch_models.sh`).
-- Clear-coat car paint (a second GGX layer on `principled`, KHR_materials_clearcoat), validated against Mitsuba.
+- ✓ Clear-coat car paint: a second GGX layer on `principled` (weight, roughness, its own normal map; scene
+  keywords `clearcoat`, `clearcoat_roughness`, `clearcoat_normal_map`), KHR_materials_clearcoat in the glTF
+  loader, validated against the same model in Mitsuba (`clearcoat-model`).
 - Metallic flakes, studio lighting (camera-invisible lights, cyclorama), shadow catcher, spot lights.
 
 ## Next ideas

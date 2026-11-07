@@ -2,8 +2,9 @@
 # Graphics Group; tools/fetch_models.sh downloads it) under the quarry HDRI,
 # with the low sun behind it on the right: rim light along the body and a long
 # shadow towards the camera. The materials come from the glTF file (see
-# gltf_loader.h); its clearcoat is not supported yet, so the paint has only
-# its base layer.
+# gltf_loader.h). The red paint is a metallic base under a full clear coat
+# (KHR_materials_clearcoat): the coat gives the sharp sky reflection, and the
+# file's orange-peel normal map bends the base only, as the extension says.
 
 image_width  960
 aspect_ratio 16/9
