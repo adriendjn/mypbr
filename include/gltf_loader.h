@@ -24,7 +24,11 @@
 //   metallicFactor x blue, roughnessFactor x green of metallicRoughnessTexture
 //                                            principled metallic, roughness
 //                                            (glTF's roughness is ours: alpha = r^2)
-//   normalTexture (with its scale)           normal_mapped
+//   normalTexture (with its scale)           principled normal map (base only)
+//   KHR_materials_clearcoat                  principled clear coat: factor x red
+//                                            of clearcoatTexture, roughness factor
+//                                            x green of clearcoatRoughnessTexture,
+//                                            clearcoatNormalTexture
 //   emissiveFactor x KHR_materials_emissive_strength
 //                                            emissive (an area light), or with
 //                                            an emissiveTexture an emissive_surface
@@ -36,7 +40,7 @@
 //   KHR_texture_transform                    uv_transform_texture
 //   alphaMode MASK or BLEND                  base color alpha as a coverage mask
 //
-// Other extensions (clearcoat, sheen, iridescence, ...) are listed on std::clog
+// Other extensions (sheen, iridescence, ...) are listed on std::clog
 // and left out. Images inside the file are decoded from memory; image paths
 // are relative to the .gltf. Only the first set of texture coordinates is used.
 //
@@ -143,7 +147,6 @@ inline bool load_gltf(const std::string& path, std::shared_ptr<material> overrid
             return converted[m] = result;
         }
 
-        if (m->has_clearcoat && m->clearcoat.clearcoat_factor > 0) ignored.insert("clearcoat");
         if (m->has_sheen) ignored.insert("sheen");
         if (m->has_iridescence) ignored.insert("iridescence");
         if (m->has_volume) ignored.insert("volume");
@@ -169,14 +172,34 @@ inline bool load_gltf(const std::string& path, std::shared_ptr<material> overrid
                 metallic = std::make_shared<solid_color>(color(x, x, x));
                 roughness = std::make_shared<solid_color>(color(r, r, r));
             }
-            mat = std::make_shared<principled>(base, metallic, roughness, ior);
-            if (use_normal_maps) {
-                if (auto normals = view_texture(m->normal_texture, true)) {
-                    if (m->normal_texture.scale != 1)
-                        normals = std::make_shared<normal_scale_texture>(normals, m->normal_texture.scale);
-                    mat = std::make_shared<normal_mapped>(mat, normals);
-                }
+            auto p = std::make_shared<principled>(base, metallic, roughness, ior);
+            // A normal texture with its scale (the strength of the tilt)
+            auto normal_view = [&](const cgltf_texture_view& view) -> std::shared_ptr<texture> {
+                if (!use_normal_maps)
+                    return nullptr;
+                auto normals = view_texture(view, true);
+                if (normals && view.scale != 1)
+                    normals = std::make_shared<normal_scale_texture>(normals, view.scale);
+                return normals;
+            };
+            p->set_normal_map(normal_view(m->normal_texture));
+            if (m->has_clearcoat && m->clearcoat.clearcoat_factor > 0) {
+                // Weight in red, roughness in green, each times its factor.
+                // Without a clearcoatNormalTexture the coat is not bent, even
+                // when the base is: the varnish levels the bumps below it.
+                const auto& cc = m->clearcoat;
+                std::shared_ptr<texture> weight, coat_roughness;
+                if (auto t = view_texture(cc.clearcoat_texture, true))
+                    weight = std::make_shared<channel_texture>(t, 0, cc.clearcoat_factor);
+                else
+                    weight = std::make_shared<solid_color>(color(1, 1, 1) * cc.clearcoat_factor);
+                if (auto t = view_texture(cc.clearcoat_roughness_texture, true))
+                    coat_roughness = std::make_shared<channel_texture>(t, 1, cc.clearcoat_roughness_factor);
+                else
+                    coat_roughness = std::make_shared<solid_color>(color(1, 1, 1) * cc.clearcoat_roughness_factor);
+                p->set_clearcoat(weight, coat_roughness, normal_view(cc.clearcoat_normal_texture));
             }
+            mat = p;
         }
 
         double strength = m->has_emissive_strength ? m->emissive_strength.emissive_strength : 1;
