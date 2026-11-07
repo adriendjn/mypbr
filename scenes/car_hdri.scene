@@ -1,0 +1,22 @@
+# The Khronos "Car Concept" glTF model (CC-BY 4.0, Eric Chadwick / Darmstadt
+# Graphics Group; tools/fetch_models.sh downloads it) under the quarry HDRI,
+# with the low sun behind it on the right: rim light along the body and a long
+# shadow towards the camera. The materials come from the glTF file (see
+# gltf_loader.h); its clearcoat is not supported yet, so the paint has only
+# its base layer.
+
+image_width  960
+aspect_ratio 16/9
+samples_per_pixel 256
+max_depth    16
+
+camera lookfrom 5.5 1.6 6.5  lookat 0 0.55 0.2  vfov 30
+
+environment ../textures/quarry_01_1k.hdr  rotate 40
+exposure    -1
+tonemap     aces
+
+material asphalt principled color 0.35 0.35 0.35 roughness 0.5
+ground asphalt
+
+mesh ../models/external/CarConcept.glb

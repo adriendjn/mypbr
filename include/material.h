@@ -462,4 +462,71 @@ class normal_mapped : public material{
         }
 };
 
+// A thin sheet of glass, such as a car window modelled as one layer of
+// triangles: light is reflected or goes straight through, never bent, since
+// the two faces of a sheet bend it back. With R the Fresnel reflectance of one
+// face, light bouncing between the two faces adds up to R + T^2 R / (1 - R^2)
+// = 2R / (1 + R) reflected, and the rest transmitted (glTF's thin-walled
+// KHR_materials_transmission). tint colors the light that passes through.
+// Both lobes are delta, so the sheet is skip_pdf like smooth glass.
+class thin_dielectric : public material{
+    public:
+        thin_dielectric(double ior, const color& tint = color(1, 1, 1)) : ior(ior), tint(tint) {}
+
+        bool scatter(const ray& r_in, const hit_record& rec, scatter_record& srec) const override {
+            vec3 unit_direction = unit_vector(r_in.direction());
+            double cos_theta = std::fmin(dot(-unit_direction, rec.normal), 1.0);
+            double r = fresnel_dielectric(cos_theta, ior);
+            double reflectance = 2 * r / (1 + r);
+            srec.pdf_ptr = nullptr;
+            srec.skip_pdf = true;
+            if (random_double() < reflectance) {
+                srec.attenuation = color(1, 1, 1);
+                srec.skip_pdf_ray = ray(rec.p, reflect(unit_direction, rec.normal));
+            } else {
+                srec.attenuation = tint;
+                srec.skip_pdf_ray = ray(rec.p, unit_direction);
+            }
+            return true;
+        }
+
+    private:
+        double ior;
+        color tint;
+};
+
+// Adds textured light to a surface that otherwise behaves like inner (glTF's
+// emissiveTexture: a glowing dashboard or logo on a normal material). It is
+// not a light of the scene, only found by BSDF sampling, so it suits faint or
+// small glowing details. Its emission gets the usual MIS weight against light
+// sampling, which is slightly off where a real light lies right behind it.
+class emissive_surface : public material{
+    public:
+        emissive_surface(std::shared_ptr<material> inner, std::shared_ptr<texture> emission)
+            : inner(inner), emission(emission) {}
+
+        bool scatter(const ray& r_in, const hit_record& rec, scatter_record& srec) const override {
+            return inner->scatter(r_in, rec, srec);
+        }
+
+        color eval(const ray& r_in, const hit_record& rec, const vec3& direction) const override {
+            return inner->eval(r_in, rec, direction);
+        }
+
+        double scattering_pdf(const ray& r_in, const hit_record& rec, const ray& scattered) const override {
+            return inner->scattering_pdf(r_in, rec, scattered);
+        }
+
+        color emitted(const ray& r_in, const hit_record& rec) const override {
+            (void)r_in;
+            if (!rec.front_face)
+                return color(0, 0, 0);
+            return emission->value(rec.u, rec.v, rec.p);
+        }
+
+    private:
+        std::shared_ptr<material> inner;
+        std::shared_ptr<texture> emission;
+};
+
 #endif

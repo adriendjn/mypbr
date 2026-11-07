@@ -197,6 +197,10 @@ int main() {
     // Zero absorption must change nothing
     ok &= furnace("clear glass, explicit zero absorption",
                   furnace_sphere(std::make_shared<dielectric>(1.5, 0.0, color(0, 0, 0))), 0.02);
+    // A thin sheet only reflects or passes light straight on, both with weight 1.
+    // Paths bounce many times inside the sphere, so Russian roulette adds
+    // per-pixel noise as for clear glass: the same tolerance
+    ok &= furnace("thin glass", furnace_sphere(std::make_shared<thin_dielectric>(1.5)), 0.02);
     ok &= slab_transmittance("absorbing slab", false);
     ok &= slab_transmittance("absorbing slab, scaled instance", true);
     // Light sampling makes this one noisy (not exact like pure BSDF sampling

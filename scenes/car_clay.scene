@@ -1,0 +1,21 @@
+# Clay render of the Khronos "Car Concept" glTF model (tools/fetch_models.sh):
+# one matte material for every part, under a uniform grey sky and a large soft
+# sun from the upper left. Without color and reflections only the shape is
+# left, which is how designers judge a body, and it shows import problems
+# (holes, flipped normals) at once.
+
+image_width  960
+aspect_ratio 16/9
+samples_per_pixel 64
+max_depth    16
+
+camera lookfrom 5.5 1.6 6.5  lookat 0 0.55 0.2  vfov 30
+
+sky uniform 0.6 0.6 0.6
+sun elevation 55 azimuth 210 intensity 2 angle 20
+tonemap aces
+
+material clay lambertian 0.75 0.75 0.75
+ground clay
+
+mesh ../models/external/CarConcept.glb clay

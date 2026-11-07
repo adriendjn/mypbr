@@ -10,7 +10,8 @@ Milestones 1-10 of `ROADMAP.md` are done, plus 11 (HDRI environment, MTL texture
 alpha masks, fog, denoiser) and 12 (normal maps, textured roughness/metallic, colored
 glass, Kulla-Conty compensation, power-based light selection) and 13 (MagicaVoxel look:
 .vox loader, DDA voxel grid, sun, atmospheric sky, ground, bloom/vignette/bokeh, ortho
-camera, height fog, `style voxel` preset). Known gaps: grey-scale
+camera, height fog, `style voxel` preset). Milestone 14 (cars) has started: glTF 2.0 loading
+(`mesh car.glb`), thin glass, `scenes/car_*.scene`; clearcoat is next. Known gaps: grey-scale
 bump/height maps are skipped with a warning, rough glass is not energy-compensated,
 the denoiser's normal guide ignores normal maps. The BSDFs, area lights and HDRI are
 validated against Mitsuba 3 (`tools/mitsuba/`, results in its README).
@@ -32,14 +33,14 @@ python3 tools/mitsuba/validate.py [case...]   # compare with Mitsuba 3 (pip inst
 
 Everything is header-only in `include/`; `main.cpp` parses args, loads the scene,
 wraps `scene.world` in a `bvh`, renders and writes outputs. `src/stb_impl.cpp` is
-the only other translation unit (stb, compiled as a SYSTEM library).
+the only other translation unit (stb and cgltf, compiled as a SYSTEM library).
 
 | File | What it holds |
 |---|---|
 | `scene.h` | `scene` struct and `load_scene()`. **The scene file format is documented in the comment at the top.** |
 | `camera.h` | Camera setup, tiled multithreaded progressive render, and the integrator (`ray_color`, `sample_light`). |
 | `denoiser.h` | `frame` (radiance + albedo/normal/variance guides) and `denoiser`: firefly clamp, then SVGF-style edge-avoiding à-trous filter on radiance / albedo. |
-| `material.h` | `material` interface; `lambertian`, `metal`, `dielectric` (optional Beer-Lambert tint), `principled` (metallic/roughness textures), `diffuse_light`, `normal_mapped` (wrapper that bends the shading normal). |
+| `material.h` | `material` interface; `lambertian`, `metal`, `dielectric` (optional Beer-Lambert tint), `principled` (metallic/roughness textures), `diffuse_light`, `normal_mapped` (wrapper that bends the shading normal), `thin_dielectric` (glass sheet: reflect or pass straight), `emissive_surface` (textured glow on another material, not a light). |
 | `microfacet.h` | GGX distribution + Smith G, Fresnel, VNDF reflection sampling, Kulla-Conty multiple-scattering compensation (`ggx_albedo_table`, `ggx_ms_term`), rough dielectric BSDF. |
 | `environment.h` | `environment_light`: equirectangular HDR sky, importance sampled with a 2D CDF; lives in `lights` and `camera::environment`. |
 | `medium.h` | `constant_medium` (homogeneous fog in a convex boundary, free-flight sampling in `hit`) and `phase_material` (Henyey-Greenstein). |
@@ -50,9 +51,10 @@ the only other translation unit (stb, compiled as a SYSTEM library).
 | `bvh.h`, `aabb.h` | Binned-SAH BVH, flattened, iterative near-first traversal. Meshes own an inner BVH. |
 | `instance.h`, `transform.h` | Affine instancing: rays are moved into object space. |
 | `obj_loader.h` | Minimal OBJ reader (v/vn/vt/f, fan triangulation, `usemtl`) and MTL reader (`Kd`/`map_Kd`, `Ks`/`Ns` → principled, `Ke`, alpha masks). |
-| `texture.h` | `solid_color`, `checker_texture`, `image_texture` (8-bit kept as bytes, decoded from sRGB on lookup; clamp or repeat; alpha). |
+| `texture.h` | `solid_color`, `checker_texture`, `image_texture` (8-bit kept as bytes, decoded from sRGB on lookup; clamp or repeat; alpha; from a file or memory); wrappers `scaled_texture`, `channel_texture`, `uv_transform_texture`, `normal_scale_texture` (for glTF). |
 | `tonemap.h`, `image_io.h`, `color3.h` | Exposure + none/reinhard/aces, sRGB curve, PNG/PPM/HDR/PFM writers. |
 | `postprocess.h` | Bloom (threshold + blur pyramid) and vignette, on display images only (`display_settings::post`). |
+| `gltf_loader.h` | glTF 2.0 (.gltf/.glb) through cgltf (`external/cgltf.h`): node tree flattened into world-space triangles, metallic-roughness materials → `principled`, transmission → `thin_dielectric`, emission, texture transforms. |
 | `vox_loader.h` | MagicaVoxel `.vox` reader: models, palette, MATL, nTRN/nGRP/nSHP scene graph (still z-up). |
 | `voxel.h` | `voxel_palette` (MATL → materials, `voxel_kind`), `voxel_model_faces` (quads, reference), `voxel_grid` (3D DDA over a block) and `voxel_blocks` (8³ blocks in a BVH). |
 | `sun.h` | `sun_light`: distant cone light given by irradiance; in `lights` and `camera::sun`, never in `world`. |
@@ -142,6 +144,11 @@ variance; `main` runs `denoiser::run` on the `frame` before every save.
   lights added later are picked uniformly until it is called again. A new emitter type needs `power()`.
 - Scene paths (textures, OBJ) are relative to the scene file, not the CWD; MTL and
   its texture paths are relative to the OBJ.
+- glTF uvs are flipped on load (v = 1 - v, ours is 0 at the bottom); `uv_transform_texture` flips back to apply
+  KHR_texture_transform in glTF's own space. glTF packs roughness in green and metallic in blue (`channel_texture`).
+  A material on a glTF `mesh` line replaces all of the file's materials (clay); `default_material` means none given.
+- glTF emission with a texture becomes `emissive_surface`, which is not in `lights`; only untextured emission is an
+  area light, so a large textured emitter (CarConcept's rims carry the logo texture) costs nothing in `sample_light`.
 - Alpha-masked triangles call `random_double()` inside `hit()` (stochastic coverage);
   `hit()` must not write `rec` before that test, or a rejected hit corrupts the BVH's
   closest-so-far record.
