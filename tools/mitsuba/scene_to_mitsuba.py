@@ -151,12 +151,13 @@ class Material:
                 self.absorption = [-math.log(c) / distance for c in tint]
         elif self.kind == "principled":
             self.albedo, self.metallic, self.roughness, self.ior = [0.8] * 3, 0.0, 0.5, 1.5
+            self.clearcoat, self.clearcoat_roughness = 0.0, 0.0
             i = 0
             while i < len(args):
                 key = args[i]
                 if key == "color":
                     self.albedo = [float(v) for v in args[i+1:i+4]]; i += 4
-                elif key in ("metallic", "roughness", "ior"):
+                elif key in ("metallic", "roughness", "ior", "clearcoat", "clearcoat_roughness"):
                     setattr(self, key, float(args[i+1])); i += 2
                 else:
                     raise SceneError(f"material '{name}': unexpected '{key}'")
@@ -207,8 +208,17 @@ class Material:
                      f'<rgb name="base_color" value="{fmt_rgb(self.albedo)}"/>'
                      f'<float name="metallic" value="{metallic}"/>'
                      f'<float name="roughness" value="{self.roughness}"/>'
-                     f'<float name="ior" value="{ior}"/></bsdf>')
+                     f'<float name="ior" value="{ior}"/>'
+                     + (f'<float name="clearcoat" value="{self.clearcoat}"/>'
+                        f'<float name="clearcoat_roughness" value="{self.clearcoat_roughness}"/>'
+                        if getattr(self, "clearcoat", 0) > 0 else '')
+                     + '</bsdf>')
         else:
+            if getattr(self, "clearcoat", 0) > 0:
+                # Disney's coat (GTR1 distribution, scaled by 1/4, base not
+                # attenuated) is a different model, not an approximation of ours
+                raise SceneError(f"material '{self.name}': Mitsuba's principled clearcoat is a different "
+                                 "model; use --bsdfs mypbr")
             # Mitsuba's principled: same GGX alpha = roughness^2 and, when
             # metallic, the same Schlick Fresnel on base_color; but separable
             # Smith G, no multiple-scattering compensation, and a Disney

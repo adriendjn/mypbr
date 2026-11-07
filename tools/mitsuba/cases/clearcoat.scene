@@ -1,0 +1,35 @@
+# clearcoat: principled spheres under a clear coat (ior 1.5) of weight 1, 0.5
+# and 1, with coat roughness 0 (a sharp reflection of the lights), 0 and 0.3;
+# a red metallic base (car paint), a red dielectric and a white one. Lit like
+# principled.scene. Mitsuba's own principled has Disney's coat (GTR1, scaled
+# by 1/4, base not attenuated), a different model, so only the same-model
+# comparison is made.
+
+image_width  384
+aspect_ratio 2
+samples_per_pixel 512
+max_depth    64
+background   0.1 0.1 0.12
+
+camera lookfrom 0 2.2 9  lookat 0 0.6 0  vup 0 1 0  vfov 24
+
+material floor  lambertian 0.5 0.5 0.5
+material wall   lambertian 0.35 0.3 0.25
+material lamp   emissive 5 5 5
+material bulb   emissive 40 30 20
+material paint  principled color 0.67 0 0 metallic 1 roughness 0.25 clearcoat 1
+material half   principled color 0.7 0.08 0.05 roughness 0.5 clearcoat 0.5
+material satin  principled color 0.7 0.08 0.05 roughness 0.6 clearcoat 1 clearcoat_roughness 0.3
+material white  principled color 0.9 0.9 0.9 roughness 0.4 clearcoat 1
+material black  principled color 0.02 0.02 0.02 roughness 0.5 clearcoat 1 clearcoat_roughness 0.1
+
+quad -10 0 -10   20 0 0   0 0 20   floor
+quad -10 0 -3    20 0 0   0 6 0    wall
+quad -2 5 -1     4 0 0    0 0 3    lamp
+sphere 2.6 2.2 1.2  0.15  bulb
+
+sphere -2.4 0.55 0    0.55  paint
+sphere -1.2 0.55 0    0.55  half
+sphere  0.0 0.55 0    0.55  satin
+sphere  1.2 0.55 0    0.55  white
+sphere  2.4 0.55 0    0.55  black
