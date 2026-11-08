@@ -116,6 +116,23 @@ def roughness_to_alpha(r):
     return max(r * r, 1e-3)
 
 
+# include/microfacet.h find_conductor: (eta, k) in RGB, Mitsuba's name if it has one
+CONDUCTORS = {
+    "Al": ("Al", (1.6575, 0.880405, 0.521244), (9.22381, 6.2695, 4.837)),
+    "Ti": (None, (3.2754, 2.37975, 2.02469), (4.57233, 3.22453, 2.72781)),
+    "Cu": ("Cu", (0.201005, 0.92375, 1.10222), (3.91326, 2.45305, 2.14209)),
+    "Au": ("Au", (0.143036, 0.375307, 1.44205), (3.983, 2.38556, 1.60336)),
+    "Ag": ("Ag", (0.155276, 0.116728, 0.138388), (4.82835, 3.12222, 2.1469)),
+    "Cr": ("Cr", (4.36967, 2.91651, 1.6549), (5.20655, 4.23131, 3.7547)),
+}
+CONDUCTOR_ALIASES = {"aluminium": "Al", "aluminum": "Al", "titanium": "Ti", "copper": "Cu",
+                     "gold": "Au", "silver": "Ag", "chromium": "Cr", "chrome": "Cr"}
+
+
+def find_conductor(name):
+    return CONDUCTORS.get(CONDUCTOR_ALIASES.get(name, name))
+
+
 class Material:
     """A parsed mypbr material and its Mitsuba translation."""
 
@@ -124,14 +141,20 @@ class Material:
         self.kind = tokens[0]
         self.emission = None
         self.absorption = None  # sigma_a of a colored dielectric
+        self.conductor = None   # (Mitsuba name or None, eta, k) of a measured metal
         args = tokens[1:]
         if "texture" in args or "normal_map" in args:
             raise SceneError(f"material '{name}': textures and normal maps are not supported")
         if self.kind == "lambertian":
             self.albedo = [float(v) for v in args[:3]]
         elif self.kind == "metal":
-            self.albedo = [float(v) for v in args[:3]]
-            self.roughness = min(max(float(args[3]), 0.0), 1.0)
+            self.conductor = find_conductor(args[0])
+            if self.conductor:
+                self.albedo = [1.0] * 3
+                self.roughness = min(max(float(args[1]), 0.0), 1.0)
+            else:
+                self.albedo = [float(v) for v in args[:3]]
+                self.roughness = min(max(float(args[3]), 0.0), 1.0)
         elif self.kind == "dielectric":
             self.ior = float(args[0])
             self.roughness = 0.0
@@ -158,6 +181,11 @@ class Material:
                 key = args[i]
                 if key == "color":
                     self.albedo = [float(v) for v in args[i+1:i+4]]; i += 4
+                elif key == "conductor":
+                    self.conductor = find_conductor(args[i+1])
+                    if not self.conductor:
+                        raise SceneError(f"material '{name}': unknown conductor '{args[i+1]}'")
+                    i += 2
                 elif key == "clearcoat_color":
                     self.clearcoat_color = [float(v) for v in args[i+1:i+4]]; i += 4
                 elif key in ("metallic", "roughness", "ior", "clearcoat", "clearcoat_roughness"):
@@ -188,6 +216,22 @@ class Material:
         if self.kind == "emissive":
             # diffuse_light scatters nothing
             return f'<bsdf type="diffuse" id="{self.name}"><rgb name="reflectance" value="0, 0, 0"/></bsdf>'
+        if self.kind == "metal" and self.conductor:
+            # Measured metal: Mitsuba's own conductor plugins, exact Fresnel
+            # from its own data where it has the metal. Rough ones differ by
+            # model (separable Smith G, no energy compensation) with "native".
+            mname, eta, k = self.conductor
+            ior = (f'<string name="material" value="{mname}"/>' if mname else
+                   f'<rgb name="eta" value="{fmt_rgb(eta)}"/><rgb name="k" value="{fmt_rgb(k)}"/>')
+            if self.roughness == 0:
+                inner = f'<bsdf type="conductor">{ior}</bsdf>'
+            elif bsdfs == "native":
+                inner = (f'<bsdf type="roughconductor"><string name="distribution" value="ggx"/>'
+                         f'<float name="alpha" value="{roughness_to_alpha(self.roughness):.9g}"/>{ior}</bsdf>')
+            else:
+                inner = None
+            if inner:
+                return f'<bsdf type="twosided" id="{self.name}">{inner}</bsdf>'
         if self.kind == "metal" and self.roughness == 0:
             # A mirror reflects albedo at every angle (no Fresnel): Mitsuba's
             # "none" conductor is a perfect mirror, scaled by specular_reflectance
@@ -217,8 +261,13 @@ class Material:
                         if getattr(self, "clearcoat", 0) > 0 else '')
                      + (f'<rgb name="clearcoat_color" value="{fmt_rgb(self.clearcoat_color)}"/>'
                         if getattr(self, "clearcoat_color", None) else '')
+                     + (f'<rgb name="eta" value="{fmt_rgb(self.conductor[1])}"/>'
+                        f'<rgb name="k" value="{fmt_rgb(self.conductor[2])}"/>' if self.conductor else '')
                      + '</bsdf>')
         else:
+            if self.conductor:
+                raise SceneError(f"material '{self.name}': Mitsuba's principled has no measured metal; "
+                                 "use --bsdfs mypbr")
             if getattr(self, "clearcoat", 0) > 0:
                 # Disney's coat (GTR1 distribution, scaled by 1/4, base not
                 # attenuated) is a different model, not an approximation of ours

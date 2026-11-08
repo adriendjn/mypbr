@@ -1,0 +1,37 @@
+# Measured metals (exact conductor Fresnel from a complex IOR): an aluminium
+# mirror, then copper at roughness 0.15, titanium at 0.35, gold at 0.6 and
+# aluminium at 0.9, and a silver one in front, under a rectangular light and
+# a dim uniform sky. Against the same model in Mitsuba ("mypbr" BSDFs) it
+# should match; against Mitsuba's own conductor / roughconductor ("native":
+# its own spectral data reduced to RGB, separable Smith G, no energy
+# compensation) the mirror and the smooth spheres should match and the rough
+# ones come out brighter in mypbr.
+
+image_width  384
+aspect_ratio 2
+samples_per_pixel 512
+max_depth    64
+background   0.15 0.15 0.15
+
+camera lookfrom 0 2.2 9  lookat 0 0.6 0  vup 0 1 0  vfov 24
+
+material floor  lambertian 0.5 0.5 0.5
+material wall   lambertian 0.3 0.35 0.4
+material lamp   emissive 6 6 6
+material alu0   metal Al 0
+material cu15   metal Cu 0.15
+material ti35   metal Ti 0.35
+material au60   metal Au 0.6
+material al90   metal aluminium 0.9
+material ag20   metal Ag 0.2
+
+quad -10 0 -10   20 0 0   0 0 20   floor
+quad -10 0 -3    20 0 0   0 6 0    wall
+quad -2 5 -1     4 0 0    0 0 3    lamp      # facing down
+
+sphere -3.0 0.55 0  0.55  alu0
+sphere -1.8 0.55 0  0.55  cu15   translate 0.6 0 0
+sphere -0.6 0.55 0  0.55  ti35   translate 0.6 0 0
+sphere  0.6 0.55 0  0.55  au60   translate 0.6 0 0
+sphere  1.8 0.55 0  0.55  al90   translate 0.6 0 0
+sphere  0.0 0.4  1.5 0.4  ag20

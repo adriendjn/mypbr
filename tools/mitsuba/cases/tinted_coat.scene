@@ -1,0 +1,36 @@
+# Painted metal: principled bases of measured metals under tinted clear coats
+# (Beer-Lambert through the coat: deeper color at grazing angles). Copper
+# paint over aluminium (the studio car's rims), a candy red over chrome, a
+# half-metallic titanium under a blue coat, a rough coat over gold, and a
+# tinted coat over a Schlick white base. Lit like clearcoat.scene. Mitsuba has
+# no tinted coat and no measured metal in its principled, so only the
+# same-model comparison is made.
+
+image_width  384
+aspect_ratio 2
+samples_per_pixel 512
+max_depth    64
+background   0.1 0.1 0.12
+
+camera lookfrom 0 2.2 9  lookat 0 0.6 0  vup 0 1 0  vfov 24
+
+material floor  lambertian 0.5 0.5 0.5
+material wall   lambertian 0.35 0.3 0.25
+material lamp   emissive 5 5 5
+material bulb   emissive 40 30 20
+material rim    principled metallic 1 conductor Al roughness 0.35 clearcoat 1 clearcoat_roughness 0.2 clearcoat_color 0.6 0.35 0.28
+material candy  principled metallic 1 conductor Cr roughness 0.2 clearcoat 1 clearcoat_color 0.7 0.1 0.1
+material blue   principled color 0.5 0.5 0.5 metallic 0.5 conductor Ti roughness 0.5 clearcoat 0.7 clearcoat_color 0.4 0.5 0.9
+material gold   principled metallic 1 conductor Au roughness 0.3 clearcoat 1 clearcoat_roughness 0.4 clearcoat_color 0.9 0.8 0.6
+material white  principled color 0.9 0.9 0.9 roughness 0.4 clearcoat 1 clearcoat_color 0.5 0.8 0.5
+
+quad -10 0 -10   20 0 0   0 0 20   floor
+quad -10 0 -3    20 0 0   0 6 0    wall
+quad -2 5 -1     4 0 0    0 0 3    lamp
+sphere 2.6 2.2 1.2  0.15  bulb
+
+sphere -2.4 0.55 0    0.55  rim
+sphere -1.2 0.55 0    0.55  candy
+sphere  0.0 0.55 0    0.55  blue
+sphere  1.2 0.55 0    0.55  gold
+sphere  2.4 0.55 0    0.55  white

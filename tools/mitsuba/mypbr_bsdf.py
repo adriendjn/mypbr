@@ -16,6 +16,11 @@ Schlick Fresnel of the dielectric f0, and the Kulla-Conty lobe
 
 mypbr's metal (roughness > 0) is this with metallic = 1.
 
+A measured metal (eta, k given) replaces Schlick's curve through base_color
+with the exact conductor Fresnel, computed here with the closed real-valued
+form (pbrt-v3's FrConductor) rather than complex arithmetic, and F_avg by
+quadrature of that curve.
+
 With a clear coat of weight w and its own roughness (alpha_c), the above
 becomes f_base and
 
@@ -111,16 +116,38 @@ class GGXLobe:
         G2 = 1 / (1 + self.lam(cos_v) + self.lam(cos_l))
         return fresnel * (self.distr().eval(h) * G2 / (4 * cos_v))
 
-    def multiple(self, f0, cos_v, cos_l):
-        """F_ms f_ms cos_l, the Kulla-Conty lobe (0 when nothing is missing)."""
+    def multiple(self, f_avg, cos_v, cos_l):
+        """F_ms f_ms cos_l, the Kulla-Conty lobe (0 when nothing is missing),
+        for the hemispherical average Fresnel f_avg."""
         if 1 - self.e_avg <= 1e-6:
             return 0
-        f_avg = f0 + (1 - f0) / 21
         f_ms = dr.square(f_avg) * self.e_avg / (1 - f_avg * (1 - self.e_avg))
         return f_ms * ((1 - self.E(cos_v)) * (1 - self.E(cos_l)) / (dr.pi * (1 - self.e_avg)) * cos_l)
 
     def pdf(self, wi, wo, h):
         return self.distr().pdf(wi, h) / (4 * dr.abs(dr.dot(wo, h)))
+
+
+def conductor_fresnel(cos_i, eta, k, xp=dr):
+    """Exact unpolarized Fresnel reflectance of a conductor eta + i k (from air)."""
+    sqrt = xp.sqrt
+    cos2 = cos_i * cos_i
+    sin2 = 1 - cos2
+    eta2, k2 = eta * eta, k * k
+    t0 = eta2 - k2 - sin2
+    a2b2 = sqrt(t0 * t0 + 4 * eta2 * k2)
+    t1 = a2b2 + cos2
+    a = sqrt(0.5 * (a2b2 + t0))
+    t2 = 2 * cos_i * a
+    rs = (t1 - t2) / (t1 + t2)
+    t3 = cos2 * a2b2 + sin2 * sin2
+    t4 = t2 * sin2
+    rp = rs * (t3 - t4) / (t3 + t4)
+    return 0.5 * (rp + rs)
+
+
+def schlick_avg(f0):
+    return f0 + (1 - f0) / 21
 
 
 class MypbrPrincipled(mi.BSDF):
@@ -139,13 +166,25 @@ class MypbrPrincipled(mi.BSDF):
         self.compensation = bool(props.get("compensation", True))
         self.lobe = GGXLobe(self.alpha)
 
+        # A measured metal: eta and k (RGB); none means Schlick on base_color
+        self.eta = props.get("eta", None)
+        self.k = props.get("k", None)
+        if self.eta is not None:
+            eta = np.array([self.eta[i] for i in range(3)], dtype=np.float64)
+            k = np.array([self.k[i] for i in range(3)], dtype=np.float64)
+            mu = (np.arange(4096) + 0.5) / 4096
+            f = np.stack([conductor_fresnel(mu, eta[c], k[c], np) for c in range(3)])
+            self.cond_f_avg = mi.Color3f(*[float(v) for v in 2 * (f * mu).mean(axis=1)])
+            self.eta = mi.Color3f(*[float(v) for v in eta])
+            self.k = mi.Color3f(*[float(v) for v in k])
+
         # Clear coat: weight 0 means none
         self.clearcoat = min(max(float(props.get("clearcoat", 0.0)), 0.0), 1.0)
         coat_roughness = min(max(float(props.get("clearcoat_roughness", 0.0)), 0.0), 1.0)
         self.coat = GGXLobe(roughness_to_alpha(coat_roughness)) if self.clearcoat > 0 else None
         self.p_coat = 0.3 if self.coat else 0.0
         tint = props.get("clearcoat_color", None)
-        self.coat_tint = None if tint is None else mi.Color3f(tint[0], tint[1], tint[2])
+        self.coat_tint = None if tint is None else mi.Color3f(*[float(tint[i]) for i in range(3)])
 
         flags = mi.BSDFFlags.GlossyReflection | mi.BSDFFlags.DiffuseReflection | mi.BSDFFlags.FrontSide
         self.m_components = [flags]
@@ -170,9 +209,17 @@ class MypbrPrincipled(mi.BSDF):
                 else self.base_color)
         f0 = self.f0(base)
         h = dr.normalize(si.wi + wo)
-        spec = self.lobe.single(self.schlick(dr.dot(wo, h), f0), cos_v, cos_l, h)
+        if self.eta is None:
+            fresnel = self.schlick(dr.dot(wo, h), f0)
+            f_avg = schlick_avg(f0)
+        else:
+            fd = self.schlick(dr.dot(wo, h), self.f0_dielectric)
+            fm = conductor_fresnel(dr.clip(dr.dot(wo, h), 0, 1), self.eta, self.k)
+            fresnel = dr.lerp(mi.Color3f(fd), fm, self.metallic)
+            f_avg = dr.lerp(mi.Color3f(schlick_avg(self.f0_dielectric)), self.cond_f_avg, self.metallic)
+        spec = self.lobe.single(fresnel, cos_v, cos_l, h)
         if self.compensation:
-            spec += self.lobe.multiple(f0, cos_v, cos_l)
+            spec += self.lobe.multiple(f_avg, cos_v, cos_l)
 
         transmitted = (1 - self.schlick(cos_l, self.f0_dielectric)) * (1 - self.schlick(cos_v, self.f0_dielectric))
         diffuse = base * ((1 - self.metallic) * transmitted * cos_l / dr.pi)
@@ -190,7 +237,7 @@ class MypbrPrincipled(mi.BSDF):
                 through = through * ((1 - w) + w * dr.power(self.coat_tint, e))
             coat = self.coat.single(self.schlick(dr.dot(wo, h), 0.04), cos_v, cos_l, h)
             if self.compensation:
-                coat += self.coat.multiple(0.04, cos_v, cos_l)
+                coat += self.coat.multiple(schlick_avg(0.04), cos_v, cos_l)
             value = through * value + w * coat
             pdf = self.p_coat * self.coat.pdf(si.wi, wo, h) + (1 - self.p_coat) * pdf
 

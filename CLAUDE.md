@@ -11,7 +11,7 @@ alpha masks, fog, denoiser) and 12 (normal maps, textured roughness/metallic, co
 glass, Kulla-Conty compensation, power-based light selection) and 13 (MagicaVoxel look:
 .vox loader, DDA voxel grid, sun, atmospheric sky, ground, bloom/vignette/bokeh, ortho
 camera, height fog, `style voxel` preset). Milestone 14 (cars) has started: glTF 2.0 loading
-(`mesh car.glb`), thin glass, `scenes/car_*.scene` (the Porsches come from Sketchfab: `SKETCHFAB_TOKEN` in a git-ignored `.env`), clearcoat (`principled` coat layer, KHR_materials_clearcoat), a photo studio (`cyclorama`, `softbox`, gridded lights `emissive ... spread`; `scenes/car_studio.scene`). Known gaps: grey-scale
+(`mesh car.glb`), thin glass, `scenes/car_*.scene` (the Porsches come from Sketchfab: `SKETCHFAB_TOKEN` in a git-ignored `.env`), clearcoat (`principled` coat layer, KHR_materials_clearcoat), a photo studio (`cyclorama`, `softbox`, gridded lights `emissive ... spread`; `scenes/car_studio.scene`), measured metals (exact conductor Fresnel from a complex IOR: `metal Al 0.3`, principled `conductor Ti`) and tinted clear coats (`clearcoat_color`; the studio car's copper-painted aluminium rims). Known gaps: grey-scale
 bump/height maps are skipped with a warning, rough glass is not energy-compensated,
 the denoiser's normal guide ignores normal maps. The BSDFs, area lights and HDRI are
 validated against Mitsuba 3 (`tools/mitsuba/`, results in its README).
@@ -40,8 +40,8 @@ the only other translation unit (stb and cgltf, compiled as a SYSTEM library).
 | `scene.h` | `scene` struct and `load_scene()`. **The scene file format is documented in the comment at the top.** |
 | `camera.h` | Camera setup, tiled multithreaded progressive render, and the integrator (`ray_color`, `sample_light`). |
 | `denoiser.h` | `frame` (radiance + albedo/normal/variance guides) and `denoiser`: firefly clamp, then SVGF-style edge-avoiding à-trous filter on radiance / albedo. |
-| `material.h` | `material` interface; `lambertian`, `metal`, `dielectric` (optional Beer-Lambert tint), `principled` (metallic/roughness textures, own base normal map, optional clear coat with its own roughness and normal map), `diffuse_light` (optional honeycomb-grid `spread`), `normal_mapped` (wrapper that bends the shading normal), `thin_dielectric` (glass sheet: reflect or pass straight; scene type `thin_glass`), `emissive_surface` (textured glow on another material, not a light). |
-| `microfacet.h` | GGX distribution + Smith G, Fresnel, VNDF reflection sampling, Kulla-Conty multiple-scattering compensation (`ggx_albedo_table`, `ggx_ms_term`), rough dielectric BSDF. |
+| `material.h` | `material` interface; `lambertian`, `metal`, `dielectric` (optional Beer-Lambert tint), `principled` (metallic/roughness textures, own base normal map, optional clear coat with its own roughness, normal map and tint, optional measured metal), `diffuse_light` (optional honeycomb-grid `spread`), `normal_mapped` (wrapper that bends the shading normal), `thin_dielectric` (glass sheet: reflect or pass straight; scene type `thin_glass`), `emissive_surface` (textured glow on another material, not a light). |
+| `microfacet.h` | GGX distribution + Smith G, Fresnel (Schlick, exact dielectric, exact conductor; `find_conductor` table of RGB complex IORs, `metal_fresnel`), VNDF reflection sampling, Kulla-Conty multiple-scattering compensation (`ggx_albedo_table`, `ggx_ms_term`), rough dielectric BSDF. |
 | `environment.h` | `environment_light`: equirectangular HDR sky, importance sampled with a 2D CDF; lives in `lights` and `camera::environment`. |
 | `medium.h` | `constant_medium` (homogeneous fog in a convex boundary, free-flight sampling in `hit`) and `phase_material` (Henyey-Greenstein). |
 | `pdf.h` | Direction densities: `cosine_pdf`, `hittable_pdf` (light sampling), `mixture_pdf`. |
@@ -142,6 +142,12 @@ variance; `main` runs `denoiser::run` on the `frame` before every save.
 - The clear coat drops the light it reflects back down to the base (glTF's (1 - w F)(1 - w F) model):
   a full coat over a white metal reflects ~92%, so coated materials are only "bounded" in the furnace test.
   Mitsuba's native principled coat is Disney's (GTR1, x1/4, base not attenuated): only `clearcoat-model` is compared.
+- Measured metals (`find_conductor`) are RGB (eta, k) reduced from spectral data the way Mitsuba's scalar_rgb does
+  (titanium from Johnson & Christy, which Mitsuba lacks). Their Kulla-Conty tint uses F_avg integrated from the
+  exact curve. On `principled`, `conductor` replaces Schlick(base color) for the metallic part only.
+- `clearcoat_color` is the coat's round-trip transmittance seen head-on; the exponent (1/cos_t,i + 1/cos_t,o)/2 uses
+  directions refracted into an ior 1.5 coat, so it never exceeds ~1.34 even at grazing angles. The coat's own
+  reflection stays white.
 - Glass absorption is applied in `ray_color` through `material::interior_transmittance` on back-face
   hits (the segment ran inside); a segment that ends on something else inside the glass is not tinted.
 - A gridded light (`diffuse_light` with `spread` < 180) emits L0 (1 - tan θ / tan(spread/2)): `emitted` depends on the

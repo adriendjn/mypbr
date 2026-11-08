@@ -6,6 +6,8 @@
 #include "pdf.h"
 
 #include <algorithm>
+#include <complex>
+#include <string>
 
 // Microfacet building blocks. Directions are in a local shading frame where
 // the surface normal is +z, both wo (towards the viewer) and wi (towards the
@@ -44,6 +46,100 @@ inline double fresnel_dielectric(double cos_i, double eta) {
     double r_perp = (cos_i - eta * cos_t) / (cos_i + eta * cos_t);
     return (r_parl * r_parl + r_perp * r_perp) / 2;
 }
+
+// Exact Fresnel reflectance of an unpolarized ray hitting a conductor from
+// air (index 1): the same formula as for a dielectric, with a complex index of
+// refraction eta + i k. k (the extinction coefficient) is how fast the wave
+// dies out inside the metal: a large k reflects almost everything. Both vary
+// with wavelength, which is where a metal's color comes from. Unlike Schlick's
+// curve through f0, the exact curve keeps some of the color at grazing angles
+// and dips slightly before reaching 1 (most visible on aluminium near 80 deg).
+inline double fresnel_conductor(double cos_i, double eta, double k) {
+    cos_i = std::clamp(cos_i, 0.0, 1.0);
+    std::complex<double> n(eta, k);
+    std::complex<double> sin2_t = (1 - cos_i * cos_i) / (n * n);
+    std::complex<double> cos_t = std::sqrt(1.0 - sin2_t);
+    std::complex<double> r_parl = (n * cos_i - cos_t) / (n * cos_i + cos_t);
+    std::complex<double> r_perp = (cos_i - n * cos_t) / (cos_i + n * cos_t);
+    return (std::norm(r_parl) + std::norm(r_perp)) / 2;
+}
+
+// Complex indices of refraction of a few metals as RGB (eta, k), each the
+// spectral data reduced to linear sRGB the way Mitsuba 3 does for its named
+// conductors (the same values as its scalar_rgb variant), so the two can be
+// compared. Titanium, which Mitsuba lacks, comes from Johnson and Christy
+// (1974) through the same reduction.
+struct conductor_ior {
+    color eta, k;
+};
+
+inline bool find_conductor(const std::string& name, conductor_ior& ior) {
+    struct entry { const char* names[3]; conductor_ior ior; };
+    static const entry table[] = {
+        {{"Al", "aluminium", "aluminum"}, {color(1.6575, 0.880405, 0.521244), color(9.22381, 6.2695, 4.837)}},
+        {{"Ti", "titanium", "titanium"},  {color(3.2754, 2.37975, 2.02469), color(4.57233, 3.22453, 2.72781)}},
+        {{"Cu", "copper", "copper"},      {color(0.201005, 0.92375, 1.10222), color(3.91326, 2.45305, 2.14209)}},
+        {{"Au", "gold", "gold"},          {color(0.143036, 0.375307, 1.44205), color(3.983, 2.38556, 1.60336)}},
+        {{"Ag", "silver", "silver"},      {color(0.155276, 0.116728, 0.138388), color(4.82835, 3.12222, 2.1469)}},
+        {{"Cr", "chromium", "chrome"},    {color(4.36967, 2.91651, 1.6549), color(5.20655, 4.23131, 3.7547)}},
+    };
+    for (const auto& e : table)
+        for (const char* n : e.names)
+            if (name == n) {
+                ior = e.ior;
+                return true;
+            }
+    return false;
+}
+
+// A metal's Fresnel reflectance as a function of the angle: Schlick's curve
+// through a color f0 (base color, glTF-style), or the exact curve of a
+// measured complex index of refraction.
+class metal_fresnel {
+    public:
+        metal_fresnel() = default;  // Schlick, white
+
+        static metal_fresnel schlick(const color& f0) {
+            metal_fresnel f;
+            f.f0_ = f0;
+            f.f_avg_ = f0 + (color(1, 1, 1) - f0) / 21;  // see ggx_ms_fresnel
+            return f;
+        }
+
+        static metal_fresnel measured(const conductor_ior& ior) {
+            metal_fresnel f;
+            f.measured_ = true;
+            f.ior_ = ior;
+            f.f0_ = f.at(1);
+            // F_avg = 2 * integral of F(mu) mu dmu (midpoint rule; F is smooth)
+            const int n = 512;
+            color sum(0, 0, 0);
+            for (int i = 0; i < n; i++) {
+                double mu = (i + 0.5) / n;
+                sum += f.at(mu) * mu;
+            }
+            f.f_avg_ = 2 * sum / n;
+            return f;
+        }
+
+        color at(double cos_theta) const {
+            if (!measured_)
+                return fresnel_schlick(cos_theta, f0_);
+            return color(fresnel_conductor(cos_theta, ior_.eta.x(), ior_.k.x()),
+                         fresnel_conductor(cos_theta, ior_.eta.y(), ior_.k.y()),
+                         fresnel_conductor(cos_theta, ior_.eta.z(), ior_.k.z()));
+        }
+
+        bool is_measured() const { return measured_; }
+        const color& f0() const { return f0_; }         // Head-on reflectance
+        const color& f_avg() const { return f_avg_; }   // Cosine-weighted hemispherical average
+
+    private:
+        bool measured_ = false;
+        conductor_ior ior_{};
+        color f0_{1, 1, 1};
+        color f_avg_{1, 1, 1};
+};
 
 // Isotropic GGX (Trowbridge-Reitz) distribution with Smith masking-shadowing.
 class ggx{
@@ -264,13 +360,16 @@ inline double ggx_ms_albedo(double cos_o, double alpha) {
 // which for Schlick is f0 + (1 - f0) * 2 * integral of (1 - mu)^5 mu dmu
 // = f0 + (1 - f0) / 21. Summing the bounces as a geometric series gives
 // F_ms = F_avg^2 E_avg / (1 - F_avg (1 - E_avg)), which is 1 for f0 = 1.
-inline color ggx_ms_fresnel(const color& f0, double alpha) {
+inline color ggx_ms_fresnel_avg(const color& f_avg, double alpha) {
     double e_avg = ggx_albedo_table::get().E_avg(alpha);
-    color f_avg = f0 + (color(1, 1, 1) - f0) / 21;
     color f_ms;
     for (int k = 0; k < 3; k++)
         f_ms[k] = f_avg[k] * f_avg[k] * e_avg / (1 - f_avg[k] * (1 - e_avg));
     return f_ms;
+}
+
+inline color ggx_ms_fresnel(const color& f0, double alpha) {
+    return ggx_ms_fresnel_avg(f0 + (color(1, 1, 1) - f0) / 21, alpha);
 }
 
 // The tinted compensation lobe, F_ms f_ms(o, i) cos_i, to add to a GGX

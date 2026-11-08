@@ -26,8 +26,8 @@ not give its expected result.
 | File | What it does |
 |---|---|
 | `cases/*.scene` | The test scenes, in mypbr's format (the single source of truth). |
-| `scene_to_mitsuba.py` | Translates a `.scene` to Mitsuba XML: camera, spheres, quads, boxes, transforms, backgrounds, HDR environments, and the lambertian / metal / dielectric / principled / emissive materials. Anything else is an error, not an approximation. |
-| `mypbr_bsdf.py` | mypbr's principled/metal BRDF (GGX + Schlick + Kulla-Conty + Lambertian base) re-written as a Mitsuba plugin, `mypbr_principled`. |
+| `scene_to_mitsuba.py` | Translates a `.scene` to Mitsuba XML: camera, spheres, quads, boxes, transforms, backgrounds, HDR environments, and the lambertian / metal (incl. measured metals) / dielectric / principled (incl. tinted coat and measured metal) / emissive materials. Anything else is an error, not an approximation. |
+| `mypbr_bsdf.py` | mypbr's principled/metal BRDF (GGX + Schlick or exact conductor Fresnel + Kulla-Conty + Lambertian base, tinted coat) re-written as a Mitsuba plugin, `mypbr_principled`. |
 | `validate.py` | Renders both, compares, writes the report. |
 
 ## How a comparison is judged
@@ -76,6 +76,9 @@ choices. So those cases run twice:
 | principled-model | matches |
 | principled-native | mypbr 2 to 3% darker overall, up to 23% at the rims: its base only gets the light the specular layer lets through, (1 - F)(1 - F), while Mitsuba's Disney diffuse brightens rough surfaces at grazing angles |
 | clearcoat-model | matches (total within 0.01%): coat over metallic and dielectric bases, sharp and rough (November 2026) |
+| conductor-model | matches: measured metals (exact conductor Fresnel; Al mirror, Cu, Ti, Au, rough Al, Ag) (November 2026) |
+| conductor-native | mirror, copper and silver match Mitsuba's own `conductor`/`roughconductor` with its own spectral data, so the RGB IORs are right; the rough spheres are brighter in mypbr (Kulla-Conty), up to 2x at the sides of the roughest, as in metal-single-scatter |
+| tinted-coat-model | matches: measured metal bases under tinted clear coats (November 2026) |
 | glass | matches, after switching smooth glass from Schlick to exact Fresnel (the rims were up to 10% too dark) |
 | colored-glass | matches |
 | hdri | matches: environment orientation, rotation and importance sampling |
