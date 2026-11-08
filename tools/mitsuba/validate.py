@@ -54,6 +54,13 @@ CASES = [
      "principled against Mitsuba's principled (Disney diffuse)", "differs"),
     ("clearcoat-model", "clearcoat", "mypbr",
      "clear coat (sharp and rough, over metal and dielectric bases) against the same model in Mitsuba", "match"),
+    ("conductor-model", "conductor", "mypbr",
+     "measured metals (exact conductor Fresnel, Al Cu Ti Au Ag) against the same model in Mitsuba", "match"),
+    ("conductor-native", "conductor", "native",
+     "measured metals against Mitsuba's conductor / roughconductor (its own data, separable G, "
+     "no energy compensation)", "differs"),
+    ("tinted-coat-model", "tinted_coat", "mypbr",
+     "measured metal bases under tinted clear coats against the same model in Mitsuba", "match"),
     ("glass", "glass", "native",
      "smooth and rough dielectric, mirror", "match"),
     ("colored-glass", "colored_glass", "native",

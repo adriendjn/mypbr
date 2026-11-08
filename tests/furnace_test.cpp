@@ -247,6 +247,33 @@ int main() {
             ok &= albedo_one("compensated GGX metal, roughness " + r, *white_metal, cos_o, 0.01);
     }
 
+    // Measured metals (complex IOR). With k = 0 the conductor formula is the
+    // dielectric one; with a huge k the metal reflects everything (F = 1), so
+    // the measured path, the F_avg integral included, must pass the white
+    // furnace like the white Schlick metal. Real metals only lose energy.
+    {
+        bool same = true;
+        for (double c : {1.0, 0.7, 0.3, 0.05})
+            same &= std::fabs(fresnel_conductor(c, 1.5, 0.0) - fresnel_dielectric(c, 1.5)) < 1e-12;
+        std::cout << (same ? "PASS " : "FAIL ") << "conductor Fresnel with k = 0 is the dielectric one\n";
+        ok &= same;
+        conductor_ior perfect{color(1, 1, 1), color(1e4, 1e4, 1e4)};
+        for (double roughness : {0.5, 1.0}) {
+            auto r = std::to_string(roughness).substr(0, 3);
+            ok &= energy_conserving("perfect measured metal, roughness " + r,
+                                    std::make_shared<metal>(perfect, roughness), 0.02);
+            auto p = std::make_shared<principled>(white, 1.0, roughness, 1.5);
+            p->set_conductor(perfect);
+            ok &= energy_conserving("principled with a perfect measured metal, roughness " + r, p, 0.02);
+        }
+        for (const char* name : {"Al", "Ti", "Cu", "Au", "Ag", "Cr"}) {
+            conductor_ior ior;
+            find_conductor(name, ior);
+            ok &= bounded(std::string("measured metal ") + name + ", roughness 0.3",
+                          std::make_shared<metal>(ior, 0.3));
+        }
+    }
+
     // Roughness and metallic from textures: a checkerboard of smooth and rough,
     // dielectric and metal patches, looked up per hit
     auto patches = [](double a, double b) {
@@ -283,6 +310,23 @@ int main() {
         ok &= bounded("clearcoat over principled dielectric, coat roughness " + r, coated(white, 0.0, nullptr));
         ok &= bounded("clearcoat over principled metallic, coat roughness " + r, coated(white, 1.0, nullptr));
         ok &= bounded("normal mapped clearcoat, coat roughness " + r, coated(white, 1.0, bumps));
+    }
+
+    // A tinted coat only absorbs (Beer-Lambert): bounded, and darker than the
+    // same coat left clear
+    {
+        auto clear = std::make_shared<principled>(white, 1.0, 0.4, 1.5);
+        auto tinted = std::make_shared<principled>(white, 1.0, 0.4, 1.5);
+        for (auto& m : {clear, tinted})
+            m->set_clearcoat(std::make_shared<solid_color>(color(1, 1, 1)),
+                             std::make_shared<solid_color>(color(0.1, 0.1, 0.1)));
+        tinted->set_clearcoat_color(color(0.9, 0.6, 0.5));
+        ok &= bounded("tinted clearcoat over principled metallic", tinted);
+        double e_clear = object_energy(clear), e_tinted = object_energy(tinted);
+        bool darker = e_tinted < e_clear;
+        std::cout << (darker ? "PASS " : "FAIL ") << "tinted clearcoat absorbs: sphere pixels "
+                  << e_tinted << " < " << e_clear << " (clear)\n";
+        ok &= darker;
     }
     return ok ? 0 : 1;
 }

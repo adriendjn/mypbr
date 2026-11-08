@@ -86,6 +86,9 @@ class scene{
 //   material ground lambertian 0.8 0.8 0.0    # albedo r g b ...
 //   material globe  lambertian texture earth  # ... or a named texture
 //   material gold   metal 0.8 0.6 0.2 0.3     # albedo r g b, roughness (0 = mirror)
+//   material alu    metal Al 0.3              # a measured metal: exact Fresnel of its
+//                              # complex IOR (Al, Ti, Cu, Au, Ag, Cr; or aluminium,
+//                              # titanium, copper, gold, silver, chrome)
 //   material glass  dielectric 1.5            # index of refraction
 //   material frost  dielectric 1.5 roughness 0.3
 //   material bottle dielectric 1.5 color 0.6 0.9 0.7 distance 2
@@ -109,7 +112,14 @@ class scene{
 //   material paint  principled color 0.6 0 0 metallic 1 roughness 0.3 clearcoat 1
 //   material peel   principled color 0.6 0 0 clearcoat 1 clearcoat_roughness 0.03 clearcoat_normal_map ripples
 // (clearcoat and clearcoat_roughness also take "texture <name>", red channel).
+// clearcoat_color r g b tints the coat (candy paint, tinted lacquer): the base
+// keeps that much of its light seen head-on (in and back out through the
+// coat), less at grazing angles, where the path through the coat is longer:
+//   material candy  principled color 0.91 0.92 0.92 metallic 1 roughness 0.3 clearcoat 1 clearcoat_color 0.6 0.3 0.2
 // A principled normal_map bends the base only, under the coat.
+// conductor <metal> makes the metallic part a measured metal (names as for
+// metal), the base color then only colors the non-metallic part. Painted rims:
+//   material rim    principled metallic 1 conductor Al roughness 0.35 clearcoat 1 clearcoat_color 0.6 0.35 0.28
 //
 // lambertian, metal and principled lines can end with a tangent-space normal
 // map (an RGB image texture, loaded linear; see normal_mapped in material.h):
@@ -748,13 +758,26 @@ inline bool load_scene(const std::string& path, scene& result) {
                     return fail(line_number, error);
                 mat = std::make_shared<lambertian>(tex);
             } else if (type == "metal") {
+                const char* usage = "expected 'material <name> metal <r> <g> <b> <roughness>'"
+                                    " or '... metal <Al|Ti|Cu|Au|Ag|Cr> <roughness>'";
                 double r, g, b, roughness;
-                std::string error;
-                if (!(in >> r >> g >> b >> roughness) || roughness < 0)
-                    return fail(line_number, "expected 'material <name> metal <r> <g> <b> <roughness>'");
+                std::string first, error;
+                conductor_ior ior;
+                if (!(in >> first))
+                    return fail(line_number, usage);
+                bool measured = find_conductor(first, ior);
+                if (measured) {
+                    if (!(in >> roughness) || roughness < 0)
+                        return fail(line_number, usage);
+                } else {
+                    std::istringstream number(first);
+                    if (!(number >> r) || !(in >> g >> b >> roughness) || roughness < 0)
+                        return fail(line_number, usage);
+                }
                 if (!read_normal_map(error))
                     return fail(line_number, error);
-                mat = std::make_shared<metal>(color(r, g, b), roughness);
+                mat = measured ? std::make_shared<metal>(ior, roughness)
+                               : std::make_shared<metal>(color(r, g, b), roughness);
             } else if (type == "dielectric") {
                 const char* usage = "expected 'material <name> dielectric <index of refraction>"
                                     " [roughness <r>] [color <r> <g> <b> [distance <d>]]'";
@@ -800,6 +823,9 @@ inline bool load_scene(const std::string& path, scene& result) {
                 std::shared_ptr<texture> metallic = std::make_shared<solid_color>(color(0, 0, 0));
                 std::shared_ptr<texture> roughness = std::make_shared<solid_color>(color(0.5, 0.5, 0.5));
                 std::shared_ptr<texture> coat, coat_roughness, coat_normals;  // No coat unless given
+                color coat_tint(1, 1, 1);
+                bool coat_tinted = false, measured = false;
+                conductor_ior ior_metal;
                 double ior = 1.5;
                 std::string key, error;
                 while (in >> key) {
@@ -817,19 +843,36 @@ inline bool load_scene(const std::string& path, scene& result) {
                     else if (key == "clearcoat")  ok = read_value_or_texture(in, coat, error);
                     else if (key == "clearcoat_roughness") ok = read_value_or_texture(in, coat_roughness, error);
                     else if (key == "clearcoat_normal_map") ok = read_texture_name(in, coat_normals, error);
+                    else if (key == "conductor") {
+                        std::string metal_name;
+                        ok = bool(in >> metal_name) && (measured = find_conductor(metal_name, ior_metal));
+                        if (!ok)
+                            error = "unknown conductor '" + metal_name + "' (known: Al Ti Cu Au Ag Cr)";
+                    }
+                    else if (key == "clearcoat_color") {
+                        double r, g, b;
+                        // 0 would need infinite absorption, > 1 would add energy
+                        ok = bool(in >> r >> g >> b) && r > 0 && g > 0 && b > 0 && r <= 1 && g <= 1 && b <= 1;
+                        coat_tint = color(r, g, b);
+                        coat_tinted = true;
+                    }
                     else return fail(line_number, "unknown principled setting '" + key + "'");
                     if (!ok)
                         return fail(line_number, error.empty() ? "bad value for principled setting '" + key + "'" : error);
                 }
-                if ((coat_roughness || coat_normals) && !coat)
-                    return fail(line_number, "clearcoat_roughness and clearcoat_normal_map need 'clearcoat <weight>'");
+                if ((coat_roughness || coat_normals || coat_tinted) && !coat)
+                    return fail(line_number, "clearcoat_roughness, clearcoat_normal_map and clearcoat_color need 'clearcoat <weight>'");
                 auto p = std::make_shared<principled>(base, metallic, roughness, ior);
                 // principled bends its own normals, so that the coat keeps its own
                 if (use_normal_maps)
                     p->set_normal_map(normal_map);
                 normal_map = nullptr;
-                if (coat)
+                if (measured)
+                    p->set_conductor(ior_metal);
+                if (coat) {
                     p->set_clearcoat(coat, coat_roughness, use_normal_maps ? coat_normals : nullptr);
+                    p->set_clearcoat_color(coat_tint);
+                }
                 mat = p;
             } else if (type == "volume") {
                 double r, g, b, aniso = 0;

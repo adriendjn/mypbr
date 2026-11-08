@@ -7,6 +7,7 @@
 #include "pdf.h"
 #include "texture.h"
 
+#include <optional>
 #include <memory>
 
 // What a material reports when a ray scatters off it.
@@ -108,12 +109,22 @@ class lambertian : public material{
 class metal : public material{
     public:
         metal(const color& albedo, double roughness)
-            : albedo(albedo), roughness(std::clamp(roughness, 0.0, 1.0)),
-              alpha(roughness_to_alpha(this->roughness)) {}
+            : albedo(albedo), fresnel(metal_fresnel::schlick(albedo)),
+              roughness(std::clamp(roughness, 0.0, 1.0)), alpha(roughness_to_alpha(this->roughness)) {}
+
+        // A measured metal: exact Fresnel of its complex index of refraction
+        // (see find_conductor), also on the mirror (roughness 0).
+        metal(const conductor_ior& ior, double roughness)
+            : metal(color(1, 1, 1), roughness) {
+            fresnel = metal_fresnel::measured(ior);
+            albedo = fresnel.f0();
+        }
 
         bool scatter(const ray& r_in, const hit_record& rec, scatter_record& srec) const override {
             if (roughness == 0) {
-                srec.attenuation = albedo;
+                // A Schlick mirror reflects albedo at every angle (RTiOW's metal)
+                srec.attenuation = fresnel.is_measured()
+                    ? fresnel.at(dot(rec.normal, unit_vector(-r_in.direction()))) : albedo;
                 srec.pdf_ptr = nullptr;
                 srec.skip_pdf = true;
                 srec.skip_pdf_ray = ray(rec.p, reflect(unit_vector(r_in.direction()), rec.normal));
@@ -127,8 +138,8 @@ class metal : public material{
             // pdf, chosen in proportion to its share of the reflected energy
             // (single scatter keeps about E(mu_o) F, the lobe adds (1 - E) F_ms)
             double cos_o = std::fmax(0.0, dot(rec.normal, unit_vector(-r_in.direction())));
-            double ms_weight = ggx_ms_albedo(cos_o, alpha) * average(ggx_ms_fresnel(albedo, alpha));
-            double ss_weight = ggx_albedo_table::get().E(cos_o, alpha) * average(fresnel_schlick(cos_o, albedo));
+            double ms_weight = ggx_ms_albedo(cos_o, alpha) * average(ggx_ms_fresnel_avg(fresnel.f_avg(), alpha));
+            double ss_weight = ggx_albedo_table::get().E(cos_o, alpha) * average(fresnel.at(cos_o));
             if (ms_weight <= 0) {
                 srec.pdf_ptr = spec;
                 return true;
@@ -148,12 +159,13 @@ class metal : public material{
                 return color(0, 0, 0);
             vec3 h = unit_vector(wo + wi);
             ggx dist(alpha);
-            return fresnel_schlick(dot(wi, h), albedo) * (dist.D(h) * dist.G(wo, wi) / (4 * wo.z()))
-                 + ggx_ms_term(wo.z(), wi.z(), alpha, albedo);
+            return fresnel.at(dot(wi, h)) * (dist.D(h) * dist.G(wo, wi) / (4 * wo.z()))
+                 + ggx_ms_fresnel_avg(fresnel.f_avg(), alpha) * ggx_ms_eval(wo.z(), wi.z(), alpha);
         }
 
     private:
         color albedo;
+        metal_fresnel fresnel;
         double roughness;
         double alpha;
 
@@ -358,6 +370,20 @@ class principled : public material{
             coat_normal_map = coat_normals;
         }
 
+        // Tints the coat (a candy or tinted lacquer over the base): tint is
+        // what the coat lets through, in and back out, seen head-on. Light
+        // crosses the layer along the refracted direction, a path 1 / cos_t
+        // times its thickness each way, so by Beer-Lambert the base below is
+        // scaled by tint^((1/cos_t,i + 1/cos_t,o) / 2): deeper and more
+        // saturated at grazing angles. The coat's own reflection stays white.
+        void set_clearcoat_color(const color& tint) { coat_tint = tint; }
+
+        // Makes the metallic part a measured metal (see find_conductor): its
+        // Fresnel then comes from the complex index of refraction instead of
+        // Schlick's curve through the base color, which only colors the
+        // non-metallic part.
+        void set_conductor(const conductor_ior& ior) { conductor = metal_fresnel::measured(ior); }
+
         bool scatter(const ray& r_in, const hit_record& rec, scatter_record& srec) const override {
             vec3 wo = unit_vector(-r_in.direction());
             vec3 n_base = normal_map ? normal_from_map(r_in, rec, *normal_map) : rec.normal;
@@ -366,10 +392,10 @@ class principled : public material{
             double cos_o = std::fmax(0.0, dot(n_base, wo));
 
             // Pick the specular lobe in proportion to its estimated share of the reflected light
-            double spec_weight = average(fresnel_schlick(cos_o, specular_f0(base, metallic)));
+            double spec_weight = average(specular_fresnel(cos_o, base, metallic));
             double diff_weight = (1 - metallic) * average(base) * (1 - fresnel_schlick(cos_o, dielectric_f0));
             // The near-diffuse multiple-scattering lobe is left to the cosine pdf as well
-            diff_weight += ggx_ms_albedo(cos_o, alpha) * average(ggx_ms_fresnel(specular_f0(base, metallic), alpha));
+            diff_weight += ggx_ms_albedo(cos_o, alpha) * average(ms_fresnel(base, metallic, alpha));
             double p_spec = spec_weight + diff_weight > 0 ? spec_weight / (spec_weight + diff_weight) : 1;
             p_spec = std::clamp(p_spec, 0.1, 1.0);
 
@@ -386,7 +412,7 @@ class principled : public material{
                 // light against what the coat lets through to the layers below
                 vec3 n_coat = coat_normal(r_in, rec);
                 double coat_weight = w * fresnel_schlick(dot(n_coat, wo), coat_f0);
-                double below = (1 - coat_weight) * (spec_weight + diff_weight);
+                double below = (1 - coat_weight) * (spec_weight + diff_weight) * average(coat_transmittance(w, 1, 1));
                 double p_coat = std::clamp(coat_weight / (coat_weight + below), 0.1, 0.9);
                 auto coat = std::make_shared<ggx_reflection_pdf>(n_coat, wo, coat_alpha_at(rec));
                 srec.pdf_ptr = std::make_shared<mixture_pdf>(coat, base_pdf, p_coat);
@@ -412,7 +438,7 @@ class principled : public material{
             vec3 n_coat = coat_normal(r_in, rec);
             double cos_o = dot(n_coat, wo), cos_i = dot(n_coat, wi);
             double through = (1 - w * fresnel_schlick(cos_o, coat_f0)) * (1 - w * fresnel_schlick(cos_i, coat_f0));
-            color result = through * below;
+            color result = through * coat_transmittance(w, cos_o, cos_i) * below;
             if (cos_o > 0 && cos_i > 0) {
                 onb frame(n_coat);
                 vec3 lo = unit_vector(frame.to_local(wo)), li = unit_vector(frame.to_local(wi));
@@ -435,8 +461,25 @@ class principled : public material{
         std::shared_ptr<texture> coat_roughness_map;
         std::shared_ptr<texture> coat_normal_map;     // May be null
         double dielectric_f0;
+        color coat_tint{1, 1, 1};                     // Head-on, in and out; white: clear
+        std::optional<metal_fresnel> conductor;       // Measured metal; none: Schlick(base)
 
         static constexpr double coat_f0 = 0.04;  // ior 1.5
+
+        // What a coat of weight w lets through to the base and back, for
+        // cosines cos_o and cos_i to the coat's normal (see set_clearcoat_color)
+        color coat_transmittance(double w, double cos_o, double cos_i) const {
+            if (coat_tint.x() == 1 && coat_tint.y() == 1 && coat_tint.z() == 1)
+                return color(1, 1, 1);
+            // Snell into ior 1.5: cos_t >= 0.745 even at grazing incidence
+            auto cos_t = [](double c) {
+                c = std::clamp(c, 0.0, 1.0);
+                return std::sqrt(1 - (1 - c * c) / (1.5 * 1.5));
+            };
+            double e = (1 / cos_t(cos_o) + 1 / cos_t(cos_i)) / 2;
+            color t(std::pow(coat_tint.x(), e), std::pow(coat_tint.y(), e), std::pow(coat_tint.z(), e));
+            return (1 - w) * color(1, 1, 1) + w * t;
+        }
 
         // The base layers (specular over diffuse) with normal n, for unit
         // directions wo and wi (world space)
@@ -451,9 +494,9 @@ class principled : public material{
             color base = base_color->value(rec.u, rec.v, rec.p);
             vec3 h = unit_vector(wo + wi);
             ggx dist(alpha);
-            color specular = fresnel_schlick(dot(wi, h), specular_f0(base, metallic))
+            color specular = specular_fresnel(dot(wi, h), base, metallic)
                            * (dist.D(h) * dist.G(wo, wi) / (4 * wo.z()))
-                           + ggx_ms_term(wo.z(), wi.z(), alpha, specular_f0(base, metallic));
+                           + ms_fresnel(base, metallic, alpha) * ggx_ms_eval(wo.z(), wi.z(), alpha);
 
             double transmitted = (1 - fresnel_schlick(wi.z(), dielectric_f0))
                                * (1 - fresnel_schlick(wo.z(), dielectric_f0));
@@ -485,6 +528,24 @@ class principled : public material{
 
         color specular_f0(const color& base, double metallic) const {
             return (1 - metallic) * color(dielectric_f0, dielectric_f0, dielectric_f0) + metallic * base;
+        }
+
+        // Fresnel of the specular layer: Schlick through the blended f0 (the
+        // same as blending the two Schlick curves), or a measured metal
+        // blended with the dielectric's Schlick curve
+        color specular_fresnel(double cos_theta, const color& base, double metallic) const {
+            if (!conductor)
+                return fresnel_schlick(cos_theta, specular_f0(base, metallic));
+            double fd = fresnel_schlick(cos_theta, dielectric_f0);
+            return (1 - metallic) * color(fd, fd, fd) + metallic * conductor->at(cos_theta);
+        }
+
+        // Tint of the Kulla-Conty lobe, from the blended hemispherical average Fresnel
+        color ms_fresnel(const color& base, double metallic, double alpha) const {
+            if (!conductor)
+                return ggx_ms_fresnel(specular_f0(base, metallic), alpha);
+            double fd = dielectric_f0 + (1 - dielectric_f0) / 21;
+            return ggx_ms_fresnel_avg((1 - metallic) * color(fd, fd, fd) + metallic * conductor->f_avg(), alpha);
         }
 
         static double average(const color& c) { return (c.x() + c.y() + c.z()) / 3; }

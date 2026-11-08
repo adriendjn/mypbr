@@ -72,6 +72,14 @@ softbox center -3.2 1.5 4.5 aim 0 0.5 1.5    size 0.7 3  strip
 # Behind the car, on the floor and facing the wall: a glow on the backdrop
 material wash     emissive 30 30 30 spread 120
 softbox center -3.2 0.2 -3.9 aim -5.1 2 -6.1  size 4 0.3  wash
+# Wheel light: a metal rim shows only what it reflects, and a spoke face
+# (normal pointing out of the car's side) seen from the camera mirrors the
+# floor beside and behind the car, which is dark: the spokes went brown
+# with a bright rim. A low strip there, along the car and facing it, is what
+# the spoke faces see. Car photographers do the same with a low softbox.
+# It sits just right of the frame: its back is black and would show.
+material wheel    emissive 15 15 15 spread 90
+softbox center 3.3 0.3 -1.4 aim 0.9 0.35 -0.4  size 2.2 0.5  wheel
 
 # The model's windows are see-through shells for a real-time viewer: dark
 # purple, hit by 41% of the rays, so they looked pink from the overhead
@@ -85,4 +93,18 @@ material headlight thin_glass 1.5
 # Same olive as the file, as a flake base under a full, mirror-smooth coat
 material paint principled color 0.254 0.238 0.162 metallic 1 roughness 0.35 clearcoat 1 clearcoat_roughness 0.02
 
-mesh ../models/external/porsche_992_gt3_rs.glb  replace Material.038_64 window  replace Material.038_63 window  replace Material.038_49 headlight  replace Material.043 paint  rotate_y 180   # this model faces -z
+# Rims (Material.058 in the file: gold, metallic 0.89, roughness 0.23, coat).
+# Copper paint over aluminium instead, matched to a reference photo. A painted
+# wheel is layers: the metal (aluminium, a measured metal: its exact Fresnel
+# from a complex index of refraction), a tinted paint, and the clear varnish.
+# The light goes through the tint, bounces on the metal and comes back out
+# through it, so it is colored twice; at grazing angles the path through the
+# paint is longer and the color deepens (the "candy" look of a tinted coat).
+# The tint (0.65 0.39 0.31, copper's hue) over aluminium (reflects ~92%)
+# gives about 0.55 0.33 0.26 head-on. Satin: a rough metal under a coat that
+# is not mirror-smooth, so the softboxes show as soft glows.
+material rim principled metallic 1 conductor Al roughness 0.4 clearcoat 1 clearcoat_roughness 0.2 clearcoat_color 0.65 0.39 0.31
+# Plain copper-colored metallic paint (Schlick on a base color, no tinted coat):
+#material rim principled color 0.55 0.33 0.26 metallic 1 roughness 0.4 clearcoat 1 clearcoat_roughness 0.2
+
+mesh ../models/external/porsche_992_gt3_rs.glb  replace Material.038_64 window  replace Material.038_63 window  replace Material.038_49 headlight  replace Material.058 rim  replace Material.043 paint  rotate_y 180   # this model faces -z
