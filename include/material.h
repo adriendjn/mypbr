@@ -490,22 +490,67 @@ class principled : public material{
         static double average(const color& c) { return (c.x() + c.y() + c.z()) / 3; }
 };
 
-// An area light: emits a constant radiance from its front face and scatters nothing.
+// An area light: emits radiance from its front face and scatters nothing.
+//
+// By default the radiance is the same in every direction (a bare diffuser).
+// A spread below 180 degrees puts a honeycomb grid in front of it, as on a
+// photographer's softbox: each cell is a short tube, and seen at an angle
+// theta from the normal its walls hide part of the diffuser behind it. For
+// cells as deep as tan(spread / 2) times their width, the visible part falls
+// linearly with tan(theta),
+//     L(theta) = L0 * max(0, 1 - tan(theta) / tan(spread / 2)),
+// and nothing gets out beyond spread / 2. The light stays where it is aimed
+// (the car) instead of washing the backdrop, and the panel looks darker from
+// the side, like a real gridded box. Light sampling picks points by area and
+// never looks at emission, so it stays unbiased; only emitted() and the
+// power used to pick lights change.
 class diffuse_light : public material{
     public:
-        diffuse_light(const color& emit) : emit(emit) {}
-
-        color emitted(const ray& r_in, const hit_record& rec) const override {
-            (void)r_in;
-            if (!rec.front_face)
-                return color(0, 0, 0);
-            return emit;
+        diffuse_light(const color& emit, double spread_degrees = 180)
+            : emit(emit), spread(spread_degrees)
+        {
+            double half = degrees_to_radians(spread_degrees) / 2;
+            tan_half = spread_degrees >= 180 ? infinity : std::tan(half);
+            cosine_share = directional_share(half);
         }
 
-        color average_emission() const override { return emit; }
+        color emitted(const ray& r_in, const hit_record& rec) const override {
+            if (!rec.front_face)
+                return color(0, 0, 0);
+            if (spread >= 180)
+                return emit;
+            return emit * grid_factor(-dot(unit_vector(r_in.direction()), rec.normal));
+        }
+
+        // The cosine-weighted mean of the radiance over the hemisphere, so that
+        // pi * area * this is still the emitted power.
+        color average_emission() const override { return emit * cosine_share; }
+
+        // L(theta) / L0 for cos(theta) = cos_theta.
+        double grid_factor(double cos_theta) const {
+            if (cos_theta <= 0)
+                return 0;
+            if (spread >= 180)
+                return 1;
+            double tan_theta = std::sqrt(std::fmax(0.0, 1 - cos_theta * cos_theta)) / cos_theta;
+            return std::fmax(0.0, 1 - tan_theta / tan_half);
+        }
+
+        // (1/pi) * integral over the hemisphere of grid_factor * cos(theta):
+        // 2 * integral_0^S (1 - tan t / tan S) cos t sin t dt
+        //   = sin^2 S - (S - sin S cos S) / tan S,  1 for S = 90 degrees.
+        static double directional_share(double half_angle) {
+            if (half_angle >= pi / 2 - 1e-9)
+                return 1;
+            double s = std::sin(half_angle), c = std::cos(half_angle);
+            return s * s - (half_angle - s * c) * c / s;
+        }
 
     private:
-        color emit;
+        color  emit;
+        double spread;        // Full cone angle in degrees; 180 = no grid
+        double tan_half;
+        double cosine_share;  // directional_share(spread / 2)
 };
 
 // Wraps a material with a tangent-space normal map (see normal_from_map for
