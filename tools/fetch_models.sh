@@ -6,6 +6,12 @@
 # pinned to fixed commits so the files never change under the scenes.
 set -e
 cd "$(dirname "$0")/.."
+# Local settings such as SKETCHFAB_TOKEN=... (.env is ignored by git)
+if [ -f .env ]; then
+    set -a
+    . ./.env
+    set +a
+fi
 mkdir -p models/external
 
 fetch() {
@@ -58,3 +64,39 @@ fetch chr_knight.vox "$VOX/character/chr_knight.vox"
 GLTF=https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/8f492390ddc7a2ae221a1369ef560589cf8c70fb/Models
 fetch CarConcept.glb "$GLTF/CarConcept/glTF-Binary/CarConcept.glb"
 fetch ToyCar.glb "$GLTF/ToyCar/glTF-Binary/ToyCar.glb"
+
+# Sketchfab cars, for scenes/car_porsche911.scene. Sketchfab only serves downloads to a signed-in
+# account, so these need your API token (free account, then
+# https://sketchfab.com/settings/password, "API Token"), either in the
+# environment or as a line SKETCHFAB_TOKEN=... in .env at the repository root
+# (ignored by git, so the token is never committed):
+#   SKETCHFAB_TOKEN=... tools/fetch_models.sh
+# Each model comes as one .glb (the "GLB" converted format, 4k textures).
+fetch_sketchfab() {
+    if [ -f "models/external/$1" ]; then
+        echo "models/external/$1 already present"
+        return
+    fi
+    if [ -z "$SKETCHFAB_TOKEN" ]; then
+        echo "Skipping $1: set SKETCHFAB_TOKEN to download it from Sketchfab"
+        return
+    fi
+    echo "Downloading $1 from Sketchfab..."
+    # The API answers with short-lived links to each format; take the .glb
+    url=$(curl -fsS --retry 3 -H "Authorization: Token $SKETCHFAB_TOKEN" \
+              "https://api.sketchfab.com/v3/models/$2/download" \
+          | python3 -c 'import json, sys; print(json.load(sys.stdin)["glb"]["url"])')
+    curl -fL --retry 3 -o "models/external/$1.part" "$url"
+    mv "models/external/$1.part" "models/external/$1"
+}
+
+# "(FREE) Porsche 911 Carrera 4S" by Lionsharp Studios (CC-BY-SA 4.0)
+# https://sketchfab.com/3d-models/free-porsche-911-carrera-4s-d01b254483794de3819786d93e0e1ebf
+fetch_sketchfab free_porsche_911_carrera_4s.glb d01b254483794de3819786d93e0e1ebf
+# Other CC-BY 4.0 cars, no scene yet (uncomment to fetch):
+# "FREE 1975 Porsche 911 (930) Turbo" by Lionsharp Studios
+# https://sketchfab.com/3d-models/free-1975-porsche-911-930-turbo-8568d9d14a994b9cae59499f0dbed21e
+# fetch_sketchfab porsche930.glb 8568d9d14a994b9cae59499f0dbed21e
+# "[FREE] BMW M3 E30" by Martin Trafas (TinoD2)
+# https://sketchfab.com/3d-models/free-bmw-m3-e30-ac3c7013434e403e8faff87948caf422
+# fetch_sketchfab bmw_e30.glb ac3c7013434e403e8faff87948caf422

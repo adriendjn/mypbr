@@ -1,0 +1,28 @@
+# "(FREE) Porsche 911 Carrera 4S" by Lionsharp Studios, from Sketchfab
+# (CC-BY-SA 4.0: credit the author, and share derived models under the same
+# license). tools/fetch_models.sh downloads it with a Sketchfab API token.
+# The quarry HDRI's low sun lights the front three-quarter view and throws a
+# long shadow to the right.
+#
+# The file was made for a real-time viewer: its body is a grey metallic paint
+# under a separate glossy shell ("coat", 46% alpha with alphaMode BLEND). We
+# hit that shell with 46% of the rays (gltf_loader.h), which averages to the
+# same blend; the car is dark grey because that is how the file is set up.
+# The model is centered on the origin, wheels at y = -0.633: lifted onto the
+# ground at 0.
+
+image_width  960
+aspect_ratio 16/9
+samples_per_pixel 256
+max_depth    16
+
+camera lookfrom 5.0 1.3 5.5  lookat 0 0.55 0  vfov 32
+
+environment ../textures/quarry_01_1k.hdr  rotate 130
+exposure    -0.5
+tonemap     aces
+
+material asphalt principled color 0.35 0.35 0.35 roughness 0.5
+ground asphalt
+
+mesh ../models/external/free_porsche_911_carrera_4s.glb  translate 0 0.633 0

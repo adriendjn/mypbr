@@ -95,6 +95,16 @@ class image_texture : public texture{
             }
         }
 
+        // A 1x1 white image whose alpha is the given coverage: a constant mask
+        // (glTF's baseColorFactor alpha on an untextured material).
+        explicit image_texture(double coverage) : repeat(false), linear(false) {
+            auto a = static_cast<unsigned char>(std::lround(255 * std::clamp(coverage, 0.0, 1.0)));
+            width = height = 1;
+            ldr_pixels = {255, 255, 255, a};
+            alpha_channel = true;
+            opaque = a == 255;
+        }
+
         bool loaded() const { return width > 0 && height > 0; }
 
         // Whether the file has an alpha channel, and whether alpha_value() is
