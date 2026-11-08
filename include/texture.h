@@ -256,7 +256,7 @@ class uv_transform_texture : public texture{
 
 // A tangent-space normal map with its tilt scaled (glTF's normalTexture.scale):
 // the encoded normal 2c - 1 becomes (s x, s y, z), still encoded as a color.
-// normal_mapped normalizes it, so s < 1 flattens the bumps.
+// normal_from_map normalizes it, so s < 1 flattens the bumps.
 class normal_scale_texture : public texture{
     public:
         normal_scale_texture(std::shared_ptr<texture> inner, double scale) : inner(inner), scale(scale) {}

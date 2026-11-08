@@ -309,5 +309,44 @@ int main() {
         }
     }
 
+    // Clear coat: a third lobe (the coat's GGX, around its own normal) mixed
+    // with the base's two. The mixture must stay normalized, and eval agree
+    // with it, also when the base and the coat are bent by different maps.
+    {
+        hit_record rec;
+        rec.p = point3(0, 0, 0);
+        rec.normal = vec3(0, 0, 1);
+        rec.front_face = true;
+        rec.u = rec.v = 0.5;
+        rec.dpdu = vec3(2, 0, 0);
+        rec.dpdv = vec3(0, 3, 0);
+        auto red = std::make_shared<solid_color>(color(0.7, 0.05, 0.05));
+        auto value = [](double x) { return std::make_shared<solid_color>(color(x, x, x)); };
+        // The base tilted 30 degrees towards +x, the coat 20 degrees towards +y
+        auto base_tilt = std::make_shared<solid_color>(color(0.5 * std::sin(pi / 6) + 0.5, 0.5, 0.5 * std::cos(pi / 6) + 0.5));
+        auto coat_tilt = std::make_shared<solid_color>(color(0.5, 0.5 * std::sin(pi / 9) + 0.5, 0.5 * std::cos(pi / 9) + 0.5));
+        for (bool bent : {false, true}) {
+            for (double coat_roughness : {0.05, 0.3}) {
+                principled m(red, 0.5, 0.4, 1.5);
+                m.set_clearcoat(value(0.8), value(coat_roughness), bent ? coat_tilt : nullptr);
+                if (bent)
+                    m.set_normal_map(base_tilt);
+                auto name = std::string("clearcoat") + (bent ? " (bent base and coat)" : "")
+                          + ", coat roughness " + std::to_string(coat_roughness).substr(0, 4);
+                for (vec3 wo : {vec3(0, 0, 1), unit_vector(vec3(1, 0.2, 0.3))}) {
+                    ray r_in(wo, -wo);
+                    scatter_record srec;
+                    m.scatter(r_in, rec, srec);
+                    ok &= check(name + ": pdf", integral_defensive(*srec.pdf_ptr), valid_fraction(*srec.pdf_ptr), 0.02);
+                    if (coat_roughness < 0.1)
+                        continue;  // A sharp coat lobe is too noisy for the uniform estimate
+                    double from_pdf, from_uniform;
+                    reflectance_two_ways(m, r_in, rec, from_pdf, from_uniform);
+                    ok &= check(name + ": eval matches pdf", from_pdf, from_uniform, 0.02);
+                }
+            }
+        }
+    }
+
     return ok ? 0 : 1;
 }

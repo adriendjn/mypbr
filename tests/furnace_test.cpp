@@ -265,5 +265,24 @@ int main() {
                       std::make_shared<lambertian>(color(1, 1, 1)), bumps));
     ok &= bounded("normal mapped principled", std::make_shared<normal_mapped>(
                       std::make_shared<principled>(white, 0.0, 0.3, 1.5), bumps));
+
+    // A clear coat only takes light from the layers below it (the (1 - w F)
+    // factors), so it can't create energy, smooth or rough, bent or not.
+    // It does lose some: light the coat reflects back down towards the base
+    // is dropped instead of bouncing out later, about 8% over a white metal
+    // (the average of F_c over the hemisphere is 0.04 + 0.96 / 21 = 8.6%), as
+    // in the glTF clearcoat model.
+    for (double coat_roughness : {0.0, 0.3}) {
+        auto r = std::to_string(coat_roughness).substr(0, 3);
+        auto coated = [&](std::shared_ptr<texture> base, double metallic, std::shared_ptr<texture> coat_normals) {
+            auto m = std::make_shared<principled>(base, metallic, 0.5, 1.5);
+            m->set_clearcoat(std::make_shared<solid_color>(color(1, 1, 1)),
+                             std::make_shared<solid_color>(color(1, 1, 1) * coat_roughness), coat_normals);
+            return m;
+        };
+        ok &= bounded("clearcoat over principled dielectric, coat roughness " + r, coated(white, 0.0, nullptr));
+        ok &= bounded("clearcoat over principled metallic, coat roughness " + r, coated(white, 1.0, nullptr));
+        ok &= bounded("normal mapped clearcoat, coat roughness " + r, coated(white, 1.0, bumps));
+    }
     return ok ? 0 : 1;
 }

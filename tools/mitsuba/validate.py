@@ -52,6 +52,8 @@ CASES = [
      "principled dielectric + metallic blend against the same model in Mitsuba", "match"),
     ("principled-native", "principled", "native",
      "principled against Mitsuba's principled (Disney diffuse)", "differs"),
+    ("clearcoat-model", "clearcoat", "mypbr",
+     "clear coat (sharp and rough, over metal and dielectric bases) against the same model in Mitsuba", "match"),
     ("glass", "glass", "native",
      "smooth and rough dielectric, mirror", "match"),
     ("colored-glass", "colored_glass", "native",

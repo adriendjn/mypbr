@@ -11,7 +11,7 @@ alpha masks, fog, denoiser) and 12 (normal maps, textured roughness/metallic, co
 glass, Kulla-Conty compensation, power-based light selection) and 13 (MagicaVoxel look:
 .vox loader, DDA voxel grid, sun, atmospheric sky, ground, bloom/vignette/bokeh, ortho
 camera, height fog, `style voxel` preset). Milestone 14 (cars) has started: glTF 2.0 loading
-(`mesh car.glb`), thin glass, `scenes/car_*.scene`; clearcoat is next. Known gaps: grey-scale
+(`mesh car.glb`), thin glass, `scenes/car_*.scene`, clearcoat (`principled` coat layer, KHR_materials_clearcoat). Known gaps: grey-scale
 bump/height maps are skipped with a warning, rough glass is not energy-compensated,
 the denoiser's normal guide ignores normal maps. The BSDFs, area lights and HDRI are
 validated against Mitsuba 3 (`tools/mitsuba/`, results in its README).
@@ -40,7 +40,7 @@ the only other translation unit (stb and cgltf, compiled as a SYSTEM library).
 | `scene.h` | `scene` struct and `load_scene()`. **The scene file format is documented in the comment at the top.** |
 | `camera.h` | Camera setup, tiled multithreaded progressive render, and the integrator (`ray_color`, `sample_light`). |
 | `denoiser.h` | `frame` (radiance + albedo/normal/variance guides) and `denoiser`: firefly clamp, then SVGF-style edge-avoiding à-trous filter on radiance / albedo. |
-| `material.h` | `material` interface; `lambertian`, `metal`, `dielectric` (optional Beer-Lambert tint), `principled` (metallic/roughness textures), `diffuse_light`, `normal_mapped` (wrapper that bends the shading normal), `thin_dielectric` (glass sheet: reflect or pass straight), `emissive_surface` (textured glow on another material, not a light). |
+| `material.h` | `material` interface; `lambertian`, `metal`, `dielectric` (optional Beer-Lambert tint), `principled` (metallic/roughness textures, own base normal map, optional clear coat with its own roughness and normal map), `diffuse_light`, `normal_mapped` (wrapper that bends the shading normal), `thin_dielectric` (glass sheet: reflect or pass straight), `emissive_surface` (textured glow on another material, not a light). |
 | `microfacet.h` | GGX distribution + Smith G, Fresnel, VNDF reflection sampling, Kulla-Conty multiple-scattering compensation (`ggx_albedo_table`, `ggx_ms_term`), rough dielectric BSDF. |
 | `environment.h` | `environment_light`: equirectangular HDR sky, importance sampled with a 2D CDF; lives in `lights` and `camera::environment`. |
 | `medium.h` | `constant_medium` (homogeneous fog in a convex boundary, free-flight sampling in `hit`) and `phase_material` (Henyey-Greenstein). |
@@ -54,7 +54,7 @@ the only other translation unit (stb and cgltf, compiled as a SYSTEM library).
 | `texture.h` | `solid_color`, `checker_texture`, `image_texture` (8-bit kept as bytes, decoded from sRGB on lookup; clamp or repeat; alpha; from a file or memory); wrappers `scaled_texture`, `channel_texture`, `uv_transform_texture`, `normal_scale_texture` (for glTF). |
 | `tonemap.h`, `image_io.h`, `color3.h` | Exposure + none/reinhard/aces, sRGB curve, PNG/PPM/HDR/PFM writers. |
 | `postprocess.h` | Bloom (threshold + blur pyramid) and vignette, on display images only (`display_settings::post`). |
-| `gltf_loader.h` | glTF 2.0 (.gltf/.glb) through cgltf (`external/cgltf.h`): node tree flattened into world-space triangles, metallic-roughness materials → `principled`, transmission → `thin_dielectric`, emission, texture transforms. |
+| `gltf_loader.h` | glTF 2.0 (.gltf/.glb) through cgltf (`external/cgltf.h`): node tree flattened into world-space triangles, metallic-roughness materials → `principled` (+ clearcoat), transmission → `thin_dielectric`, emission, texture transforms. |
 | `vox_loader.h` | MagicaVoxel `.vox` reader: models, palette, MATL, nTRN/nGRP/nSHP scene graph (still z-up). |
 | `voxel.h` | `voxel_palette` (MATL → materials, `voxel_kind`), `voxel_model_faces` (quads, reference), `voxel_grid` (3D DDA over a block) and `voxel_blocks` (8³ blocks in a BVH). |
 | `sun.h` | `sun_light`: distant cone light given by irradiance; in `lights` and `camera::sun`, never in `world`. |
@@ -136,7 +136,11 @@ variance; `main` runs `denoiser::run` on the `frame` before every save.
   shadow ray that reaches the sky. Its sampling density is per pixel (piecewise constant), its lookup bilinear.
 - Normal maps need `hit_record::dpdu`/`dpdv`: new geometry must set them, or the unperturbed normal is used.
   Normal-map and roughness/metallic images must be loaded `linear` (no sRGB decode). `normal_mapped`
-  only wraps reflective materials (lambertian, metal, principled), not glass.
+  only wraps reflective materials (lambertian, metal), not glass. `principled` bends its own normals
+  (`set_normal_map`, and the coat's in `set_clearcoat`); wrapping it would bend the coat with the base.
+- The clear coat drops the light it reflects back down to the base (glTF's (1 - w F)(1 - w F) model):
+  a full coat over a white metal reflects ~92%, so coated materials are only "bounded" in the furnace test.
+  Mitsuba's native principled coat is Disney's (GTR1, x1/4, base not attenuated): only `clearcoat-model` is compared.
 - Glass absorption is applied in `ray_color` through `material::interior_transmittance` on back-face
   hits (the segment ran inside); a segment that ends on something else inside the glass is not tinted.
 - `mesh::pdf_value` is linear in triangle count: fine for small emissive meshes only.

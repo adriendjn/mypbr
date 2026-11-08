@@ -75,6 +75,7 @@ choices. So those cases run twice:
 | metal-native | the same plus 0.3%: height-correlated vs separable Smith G barely matters |
 | principled-model | matches |
 | principled-native | mypbr 2 to 3% darker overall, up to 23% at the rims: its base only gets the light the specular layer lets through, (1 - F)(1 - F), while Mitsuba's Disney diffuse brightens rough surfaces at grazing angles |
+| clearcoat-model | matches (total within 0.01%): coat over metallic and dielectric bases, sharp and rough (November 2026) |
 | glass | matches, after switching smooth glass from Schlick to exact Fresnel (the rims were up to 10% too dark) |
 | colored-glass | matches |
 | hdri | matches: environment orientation, rotation and importance sampling |
