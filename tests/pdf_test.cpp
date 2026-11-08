@@ -348,5 +348,27 @@ int main() {
         }
     }
 
+    // A gridded area light (softbox): average_emission must be the cosine-weighted
+    // mean of what emitted() returns, or picking lights by power and the scene's
+    // brightness would disagree. Integrated by quadrature over theta (the
+    // profile has no azimuth dependence): (1/pi) * 2 pi * integral f cos sin.
+    for (double spread : {180.0, 120.0, 60.0, 20.0}) {
+        diffuse_light grid(color(1, 1, 1), spread);
+        hit_record rec;
+        rec.normal = vec3(0, 0, 1);
+        rec.front_face = true;
+        const int steps = 200000;
+        double sum = 0;
+        for (int i = 0; i < steps; i++) {
+            double theta = (i + 0.5) / steps * (pi / 2);
+            vec3 towards_viewer(std::sin(theta), 0, std::cos(theta));
+            double f = grid.emitted(ray(point3(0, 0, 0) + towards_viewer, -towards_viewer), rec).x();
+            sum += f * std::cos(theta) * std::sin(theta);
+        }
+        double share = 2 * sum * (pi / 2) / steps;
+        ok &= check("softbox grid, spread " + std::to_string(int(spread)) + ": power matches emission",
+                    grid.average_emission().x(), share, 1e-4);
+    }
+
     return ok ? 0 : 1;
 }

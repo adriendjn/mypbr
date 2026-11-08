@@ -13,6 +13,7 @@
 #include "plane.h"
 #include "quad.h"
 #include "sphere.h"
+#include "studio.h"
 #include "sun.h"
 #include "texture.h"
 #include "tonemap.h"
@@ -114,6 +115,10 @@ class scene{
 //   normal_maps  off           # ignore normal maps (normal_map and those of OBJ/MTL
 //                              # files) on the lines that follow; "on" is the default
 //   material lamp   emissive 15 15 15         # area light, radiance r g b
+//   material grid   emissive 8 8 8 spread 60  # ... behind a honeycomb grid: the
+//                              # radiance falls off away from the normal and is 0
+//                              # beyond 30 degrees (spread is the full angle;
+//                              # 180, the default, is a bare diffuser)
 //   material haze   volume 0.9 0.9 0.9 g 0.3  # for media: scattering albedo r g b,
 //                                             # optional Henyey-Greenstein g in (-1, 1)
 //                                             # (0 = isotropic, > 0 = forward)
@@ -171,6 +176,18 @@ class scene{
 //                                                     # voxel grid (same image, slower)
 //   vox    models/island.vox  edges 0.06 [0 0 0]      # outlines the voxel shapes
 //                                                     # (grid only), width in voxels
+//
+// Studio pieces (see studio.h):
+//
+//   cyclorama width 20 front 10 back 4 height 8 radius 3  [segments 32] [material]
+//                              # a backdrop that curves into the floor (no horizon
+//                              # line): floor y = 0 from z = front to z = -back, then
+//                              # a quarter circle of that radius up into a wall at
+//                              # z = -back - radius, height high; all settings optional
+//   softbox center 0 4 0  aim 0 0 0  size 3 6  [roll 0]  material
+//                              # a size w x h rectangle light at center, facing aim,
+//                              # its width horizontal (roll turns it about the aim
+//                              # axis); needs an emissive material, one-sided
 //
 // Any object can be followed by transforms, applied in the order given:
 //
@@ -803,10 +820,14 @@ inline bool load_scene(const std::string& path, scene& result) {
                 }
                 mat = std::make_shared<phase_material>(color(r, g, b), aniso);
             } else if (type == "emissive") {
-                double r, g, b;
+                const char* usage = "expected 'material <name> emissive <r> <g> <b> [spread <degrees, 0 to 180>]'";
+                double r, g, b, spread = 180;
+                std::string key;
                 if (!(in >> r >> g >> b))
-                    return fail(line_number, "expected 'material <name> emissive <r> <g> <b>'");
-                mat = std::make_shared<diffuse_light>(color(r, g, b));
+                    return fail(line_number, usage);
+                if (in >> key && (key != "spread" || !(in >> spread) || spread <= 0 || spread > 180))
+                    return fail(line_number, usage);
+                mat = std::make_shared<diffuse_light>(color(r, g, b), spread);
             } else {
                 return fail(line_number, "unknown material type '" + type + "'");
             }
@@ -845,6 +866,73 @@ inline bool load_scene(const std::string& path, scene& result) {
                 object = box(a, b, mat);
             }
             if (!add_object(object, mat, xform, transformed, error))
+                return fail(line_number, error);
+        } else if (keyword == "cyclorama") {
+            const char* usage = "expected 'cyclorama [width <w>] [front <f>] [back <b>] [height <h>] [radius <r>]"
+                                " [segments <n>] [material] [transforms]'";
+            cyclorama_settings cyc;
+            // Settings come first, as key value pairs; the rest is the usual tail
+            std::string key;
+            std::streampos mark = in.tellg();
+            while (in >> key) {
+                bool ok = true;
+                if (key == "width")         ok = bool(in >> cyc.width) && cyc.width > 0;
+                else if (key == "front")    ok = bool(in >> cyc.front);
+                else if (key == "back")     ok = bool(in >> cyc.back);
+                else if (key == "height")   ok = bool(in >> cyc.height) && cyc.height > 0;
+                else if (key == "radius")   ok = bool(in >> cyc.radius) && cyc.radius > 0;
+                else if (key == "segments") ok = bool(in >> cyc.segments) && cyc.segments > 0;
+                else break;
+                if (!ok)
+                    return fail(line_number, usage);
+                mark = in.tellg();
+            }
+            if (cyc.front < -cyc.back)
+                return fail(line_number, "a cyclorama's front must be in front of its back (front >= -back)");
+            in.clear();
+            in.seekg(mark);
+            std::shared_ptr<material> mat;
+            transform xform;
+            bool transformed;
+            std::string error;
+            if (!read_tail(in, mat, xform, transformed, error))
+                return fail(line_number, error);
+            if (std::dynamic_pointer_cast<diffuse_light>(mat))
+                return fail(line_number, "a cyclorama cannot be a light (mesh light sampling is linear in triangles)");
+            if (!add_object(make_cyclorama(cyc, mat), mat, xform, transformed, error))
+                return fail(line_number, error);
+        } else if (keyword == "softbox") {
+            const char* usage = "expected 'softbox center <x y z> aim <x y z> size <width> <height> [roll <degrees>]"
+                                " <emissive material> [transforms]'";
+            point3 center, aim;
+            double width = 0, height = 0, roll = 0;
+            bool has_center = false, has_aim = false;
+            std::string key;
+            std::streampos mark = in.tellg();
+            while (in >> key) {
+                bool ok = true;
+                if (key == "center")      ok = has_center = bool(in >> center[0] >> center[1] >> center[2]);
+                else if (key == "aim")    ok = has_aim = bool(in >> aim[0] >> aim[1] >> aim[2]);
+                else if (key == "size")   ok = bool(in >> width >> height) && width > 0 && height > 0;
+                else if (key == "roll")   ok = bool(in >> roll);
+                else break;
+                if (!ok)
+                    return fail(line_number, usage);
+                mark = in.tellg();
+            }
+            if (!has_center || !has_aim || width <= 0 || (aim - center).near_zero())
+                return fail(line_number, usage);
+            in.clear();
+            in.seekg(mark);
+            std::shared_ptr<material> mat;
+            transform xform;
+            bool transformed;
+            std::string error;
+            if (!read_tail(in, mat, xform, transformed, error))
+                return fail(line_number, error);
+            if (!std::dynamic_pointer_cast<diffuse_light>(mat))
+                return fail(line_number, "a softbox needs an emissive material");
+            if (!add_object(make_softbox(center, aim, width, height, roll, mat), mat, xform, transformed, error))
                 return fail(line_number, error);
         } else if (keyword == "medium") {
             double density;
