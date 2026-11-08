@@ -1,0 +1,88 @@
+# The studio shot of car_studio.scene with gloss metallic paint instead of
+# the model's satin. Everything else is the same (keep the two in step).
+#
+# The file's paint (Material.043) is a metal of roughness 0.51 under a 21%
+# clear coat: the softboxes spread into broad soft gradients. Real metallic
+# paint is two layers: a base of metal flakes in color, fairly rough (they
+# point every which way, so the color glows over a wide angle), and on top a
+# thick clear varnish, smooth as glass. The coat gives the sharp reflections
+# of the softboxes, crisp lines that follow the body; the base gives the
+# colored sheen under them. That is the "wet" look of a new car.
+#
+# Studio car shot: a cyclorama and four softboxes, the classic car-photography
+# setup, around the Porsche 992 GT3 RS ("porsche-992-gt3-rs" on Sketchfab,
+# saved as models/external/porsche_992_gt3_rs.glb; not in git).
+#
+# The car is the mesh line at the bottom (its replace options only fit this model): any car whose wheels sit on y = 0,
+# centered on the origin with its length along z and its nose towards +z,
+# drops in (turn or move it with rotate_y / translate otherwise). The camera
+# is at the front right three-quarter view, and the cyclorama is turned
+# (rotate_y 40) to face it.
+#
+# The lights, and why:
+#  - Paint is a mirror under a clear coat: on a car you mostly see what the
+#    body reflects, not the light falling on it. Lighting a car is choosing
+#    what it reflects, so the lights are big shapes placed where the camera
+#    sees them in the body.
+#  - Overhead "flying flat" (3 x 7 m): bigger than the car and straight above
+#    it, so the bonnet, roof and the top of the wings reflect one long, even
+#    highlight that follows their curvature. It also gives the soft contact
+#    shadow that sets the car on the floor.
+#  - Side strip (8 x 1 m, lying along the car) low on the right, behind it:
+#    the right flank mirrors it as a line running along the doors (a mirror
+#    shows what lies opposite the camera across the normal, so for a flank
+#    seen from the front, that is behind and to the side); how the line bends
+#    shows the shoulder and the wheel arches.
+#  - Front-left strip (0.7 x 3 m, vertical): lights the nose and puts a
+#    vertical highlight on the front bumper and wing corner, so the front
+#    doesn't merge with the dark studio.
+#  - Wash: a low strip hidden behind the car, aimed at the wall, puts a glow
+#    on the backdrop just behind the car so its dark top and rear wing stand
+#    out against it (separation).
+#  - Everything else is black (background 0): the dark between the
+#    highlights is what draws the body's shape. Grids (spread) keep each box
+#    on the car instead of the backdrop, which falls off into a gradient.
+#  - The cyclorama curves into the floor, so there is no horizon line and the
+#    car stands in a seamless space; its semi-gloss floor shows a soft
+#    reflection of the car.
+
+image_width  1920
+aspect_ratio 16/9
+samples_per_pixel 256
+max_depth    16
+
+# Low (1 m, below the roofline) and on a longer lens: the car fills the
+# frame and looks more imposing than seen from eye height
+camera lookfrom 5.2 1.0 6.1  lookat 0 0.6 0.1  vfov 25
+
+background 0 0 0
+tonemap    aces
+exposure   0
+
+# Backdrop: mid-grey, slightly glossy
+material cyc principled color 0.35 0.35 0.35 roughness 0.2
+cyclorama width 26 front 14 back 4.5 height 9 radius 3.5 cyc  rotate_y 40
+
+# Softboxes: emissive behind a honeycomb grid (spread = full cone angle)
+material overhead emissive 10 10 10 spread 100
+material strip    emissive 10 10 10 spread 80
+softbox center 0 4.2 0      aim 0 0 0        size 3 7    overhead
+softbox center 4.2 0.7 -5.5 aim 0 0.7 -4     size 8 1.0  strip
+softbox center -3.2 1.5 4.5 aim 0 0.5 1.5    size 0.7 3  strip
+# Behind the car, on the floor and facing the wall: a glow on the backdrop
+material wash     emissive 30 30 30 spread 120
+softbox center -3.2 0.2 -3.9 aim -5.1 2 -6.1  size 4 0.3  wash
+
+# The model's windows are see-through shells for a real-time viewer: dark
+# purple, hit by 41% of the rays, so they looked pink from the overhead
+# light's reflection. Real glass instead: a thin sheet that reflects by
+# Fresnel (about 4% head-on, a mirror at grazing angles) and lets the rest
+# straight through. Each window is two shells (outside and inside), so the
+# tint is per shell. The headlight covers get clear glass too.
+material window    thin_glass 1.5 color 0.92 0.95 0.93
+material headlight thin_glass 1.5
+
+# Same olive as the file, as a flake base under a full, mirror-smooth coat
+material paint principled color 0.254 0.238 0.162 metallic 1 roughness 0.35 clearcoat 1 clearcoat_roughness 0.02
+
+mesh ../models/external/porsche_992_gt3_rs.glb  replace Material.038_64 window  replace Material.038_63 window  replace Material.038_49 headlight  replace Material.043 paint  rotate_y 180   # this model faces -z
