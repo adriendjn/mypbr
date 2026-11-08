@@ -35,7 +35,7 @@
 #    car stands in a seamless space; its semi-gloss floor shows a soft
 #    reflection of the car.
 
-image_width  960
+image_width  1080
 aspect_ratio 16/9
 samples_per_pixel 256
 max_depth    16
