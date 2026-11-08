@@ -65,7 +65,7 @@ GLTF=https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/8f492390d
 fetch CarConcept.glb "$GLTF/CarConcept/glTF-Binary/CarConcept.glb"
 fetch ToyCar.glb "$GLTF/ToyCar/glTF-Binary/ToyCar.glb"
 
-# Sketchfab cars, for scenes/car_porsche911.scene. Sketchfab only serves downloads to a signed-in
+# Sketchfab cars, for scenes/car_porsche911.scene and car_porsche992.scene. Sketchfab only serves downloads to a signed-in
 # account, so these need your API token (free account, then
 # https://sketchfab.com/settings/password, "API Token"), either in the
 # environment or as a line SKETCHFAB_TOKEN=... in .env at the repository root
@@ -93,6 +93,9 @@ fetch_sketchfab() {
 # "(FREE) Porsche 911 Carrera 4S" by Lionsharp Studios (CC-BY-SA 4.0)
 # https://sketchfab.com/3d-models/free-porsche-911-carrera-4s-d01b254483794de3819786d93e0e1ebf
 fetch_sketchfab free_porsche_911_carrera_4s.glb d01b254483794de3819786d93e0e1ebf
+# "Porsche 992 GT3 RS" by VTX (CC BY-NC-SA 4.0), with a cockpit
+# https://sketchfab.com/3d-models/porsche-992-gt3-rs-80bf174857414a57ac9741567d3c4534
+fetch_sketchfab porsche_992_gt3_rs.glb 80bf174857414a57ac9741567d3c4534
 # Other CC-BY 4.0 cars, no scene yet (uncomment to fetch):
 # "FREE 1975 Porsche 911 (930) Turbo" by Lionsharp Studios
 # https://sketchfab.com/3d-models/free-1975-porsche-911-930-turbo-8568d9d14a994b9cae59499f0dbed21e

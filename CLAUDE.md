@@ -11,7 +11,7 @@ alpha masks, fog, denoiser) and 12 (normal maps, textured roughness/metallic, co
 glass, Kulla-Conty compensation, power-based light selection) and 13 (MagicaVoxel look:
 .vox loader, DDA voxel grid, sun, atmospheric sky, ground, bloom/vignette/bokeh, ortho
 camera, height fog, `style voxel` preset). Milestone 14 (cars) has started: glTF 2.0 loading
-(`mesh car.glb`), thin glass, `scenes/car_*.scene` (the Porsche comes from Sketchfab: `SKETCHFAB_TOKEN` in a git-ignored `.env`), clearcoat (`principled` coat layer, KHR_materials_clearcoat), a photo studio (`cyclorama`, `softbox`, gridded lights `emissive ... spread`; `scenes/car_studio.scene`). Known gaps: grey-scale
+(`mesh car.glb`), thin glass, `scenes/car_*.scene` (the Porsches come from Sketchfab: `SKETCHFAB_TOKEN` in a git-ignored `.env`), clearcoat (`principled` coat layer, KHR_materials_clearcoat), a photo studio (`cyclorama`, `softbox`, gridded lights `emissive ... spread`; `scenes/car_studio.scene`). Known gaps: grey-scale
 bump/height maps are skipped with a warning, rough glass is not energy-compensated,
 the denoiser's normal guide ignores normal maps. The BSDFs, area lights and HDRI are
 validated against Mitsuba 3 (`tools/mitsuba/`, results in its README).
