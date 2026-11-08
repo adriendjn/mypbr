@@ -152,11 +152,14 @@ class Material:
         elif self.kind == "principled":
             self.albedo, self.metallic, self.roughness, self.ior = [0.8] * 3, 0.0, 0.5, 1.5
             self.clearcoat, self.clearcoat_roughness = 0.0, 0.0
+            self.clearcoat_color = None
             i = 0
             while i < len(args):
                 key = args[i]
                 if key == "color":
                     self.albedo = [float(v) for v in args[i+1:i+4]]; i += 4
+                elif key == "clearcoat_color":
+                    self.clearcoat_color = [float(v) for v in args[i+1:i+4]]; i += 4
                 elif key in ("metallic", "roughness", "ior", "clearcoat", "clearcoat_roughness"):
                     setattr(self, key, float(args[i+1])); i += 2
                 else:
@@ -212,6 +215,8 @@ class Material:
                      + (f'<float name="clearcoat" value="{self.clearcoat}"/>'
                         f'<float name="clearcoat_roughness" value="{self.clearcoat_roughness}"/>'
                         if getattr(self, "clearcoat", 0) > 0 else '')
+                     + (f'<rgb name="clearcoat_color" value="{fmt_rgb(self.clearcoat_color)}"/>'
+                        if getattr(self, "clearcoat_color", None) else '')
                      + '</bsdf>')
         else:
             if getattr(self, "clearcoat", 0) > 0:

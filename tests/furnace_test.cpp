@@ -284,5 +284,22 @@ int main() {
         ok &= bounded("clearcoat over principled metallic, coat roughness " + r, coated(white, 1.0, nullptr));
         ok &= bounded("normal mapped clearcoat, coat roughness " + r, coated(white, 1.0, bumps));
     }
+
+    // A tinted coat only absorbs (Beer-Lambert): bounded, and darker than the
+    // same coat left clear
+    {
+        auto clear = std::make_shared<principled>(white, 1.0, 0.4, 1.5);
+        auto tinted = std::make_shared<principled>(white, 1.0, 0.4, 1.5);
+        for (auto& m : {clear, tinted})
+            m->set_clearcoat(std::make_shared<solid_color>(color(1, 1, 1)),
+                             std::make_shared<solid_color>(color(0.1, 0.1, 0.1)));
+        tinted->set_clearcoat_color(color(0.9, 0.6, 0.5));
+        ok &= bounded("tinted clearcoat over principled metallic", tinted);
+        double e_clear = object_energy(clear), e_tinted = object_energy(tinted);
+        bool darker = e_tinted < e_clear;
+        std::cout << (darker ? "PASS " : "FAIL ") << "tinted clearcoat absorbs: sphere pixels "
+                  << e_tinted << " < " << e_clear << " (clear)\n";
+        ok &= darker;
+    }
     return ok ? 0 : 1;
 }

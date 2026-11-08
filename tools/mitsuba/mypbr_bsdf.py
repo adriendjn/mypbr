@@ -23,6 +23,9 @@ becomes f_base and
             + (1 - w F_c(o)) (1 - w F_c(i)) f_base cos_i
 
 with F_c the Schlick Fresnel of f0 = 0.04 (ior 1.5), on the same normal.
+A tinted coat (clearcoat_color c) also scales f_base by
+(1 - w) + w c^((1 / cos_t(o) + 1 / cos_t(i)) / 2), cos_t the cosine of the
+direction refracted into the coat (Beer-Lambert along the path through it).
 
 E(mu) is computed here by quadrature over the GGX distribution of normals
 (mypbr's ggx_albedo_table uses stratified VNDF sampling instead), for the
@@ -141,6 +144,8 @@ class MypbrPrincipled(mi.BSDF):
         coat_roughness = min(max(float(props.get("clearcoat_roughness", 0.0)), 0.0), 1.0)
         self.coat = GGXLobe(roughness_to_alpha(coat_roughness)) if self.clearcoat > 0 else None
         self.p_coat = 0.3 if self.coat else 0.0
+        tint = props.get("clearcoat_color", None)
+        self.coat_tint = None if tint is None else mi.Color3f(tint[0], tint[1], tint[2])
 
         flags = mi.BSDFFlags.GlossyReflection | mi.BSDFFlags.DiffuseReflection | mi.BSDFFlags.FrontSide
         self.m_components = [flags]
@@ -177,6 +182,12 @@ class MypbrPrincipled(mi.BSDF):
         if self.coat:
             w = self.clearcoat
             through = (1 - w * self.schlick(cos_v, 0.04)) * (1 - w * self.schlick(cos_l, 0.04))
+            if self.coat_tint is not None:
+                def cos_t(c):
+                    c = dr.clip(c, 0, 1)
+                    return dr.sqrt(1 - (1 - c * c) / 2.25)
+                e = (1 / cos_t(cos_v) + 1 / cos_t(cos_l)) / 2
+                through = through * ((1 - w) + w * dr.power(self.coat_tint, e))
             coat = self.coat.single(self.schlick(dr.dot(wo, h), 0.04), cos_v, cos_l, h)
             if self.compensation:
                 coat += self.coat.multiple(0.04, cos_v, cos_l)

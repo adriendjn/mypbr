@@ -358,6 +358,14 @@ class principled : public material{
             coat_normal_map = coat_normals;
         }
 
+        // Tints the coat (a candy or tinted lacquer over the base): tint is
+        // what the coat lets through, in and back out, seen head-on. Light
+        // crosses the layer along the refracted direction, a path 1 / cos_t
+        // times its thickness each way, so by Beer-Lambert the base below is
+        // scaled by tint^((1/cos_t,i + 1/cos_t,o) / 2): deeper and more
+        // saturated at grazing angles. The coat's own reflection stays white.
+        void set_clearcoat_color(const color& tint) { coat_tint = tint; }
+
         bool scatter(const ray& r_in, const hit_record& rec, scatter_record& srec) const override {
             vec3 wo = unit_vector(-r_in.direction());
             vec3 n_base = normal_map ? normal_from_map(r_in, rec, *normal_map) : rec.normal;
@@ -386,7 +394,7 @@ class principled : public material{
                 // light against what the coat lets through to the layers below
                 vec3 n_coat = coat_normal(r_in, rec);
                 double coat_weight = w * fresnel_schlick(dot(n_coat, wo), coat_f0);
-                double below = (1 - coat_weight) * (spec_weight + diff_weight);
+                double below = (1 - coat_weight) * (spec_weight + diff_weight) * average(coat_transmittance(w, 1, 1));
                 double p_coat = std::clamp(coat_weight / (coat_weight + below), 0.1, 0.9);
                 auto coat = std::make_shared<ggx_reflection_pdf>(n_coat, wo, coat_alpha_at(rec));
                 srec.pdf_ptr = std::make_shared<mixture_pdf>(coat, base_pdf, p_coat);
@@ -412,7 +420,7 @@ class principled : public material{
             vec3 n_coat = coat_normal(r_in, rec);
             double cos_o = dot(n_coat, wo), cos_i = dot(n_coat, wi);
             double through = (1 - w * fresnel_schlick(cos_o, coat_f0)) * (1 - w * fresnel_schlick(cos_i, coat_f0));
-            color result = through * below;
+            color result = through * coat_transmittance(w, cos_o, cos_i) * below;
             if (cos_o > 0 && cos_i > 0) {
                 onb frame(n_coat);
                 vec3 lo = unit_vector(frame.to_local(wo)), li = unit_vector(frame.to_local(wi));
@@ -435,8 +443,24 @@ class principled : public material{
         std::shared_ptr<texture> coat_roughness_map;
         std::shared_ptr<texture> coat_normal_map;     // May be null
         double dielectric_f0;
+        color coat_tint{1, 1, 1};                     // Head-on, in and out; white: clear
 
         static constexpr double coat_f0 = 0.04;  // ior 1.5
+
+        // What a coat of weight w lets through to the base and back, for
+        // cosines cos_o and cos_i to the coat's normal (see set_clearcoat_color)
+        color coat_transmittance(double w, double cos_o, double cos_i) const {
+            if (coat_tint.x() == 1 && coat_tint.y() == 1 && coat_tint.z() == 1)
+                return color(1, 1, 1);
+            // Snell into ior 1.5: cos_t >= 0.745 even at grazing incidence
+            auto cos_t = [](double c) {
+                c = std::clamp(c, 0.0, 1.0);
+                return std::sqrt(1 - (1 - c * c) / (1.5 * 1.5));
+            };
+            double e = (1 / cos_t(cos_o) + 1 / cos_t(cos_i)) / 2;
+            color t(std::pow(coat_tint.x(), e), std::pow(coat_tint.y(), e), std::pow(coat_tint.z(), e));
+            return (1 - w) * color(1, 1, 1) + w * t;
+        }
 
         // The base layers (specular over diffuse) with normal n, for unit
         // directions wo and wi (world space)
