@@ -93,11 +93,13 @@ material headlight thin_glass 1.5
 material paint principled color 0.254 0.238 0.162 metallic 1 roughness 0.35 clearcoat 1 clearcoat_roughness 0.02
 
 # Rims (Material.058 in the file: gold, metallic 0.89, roughness 0.23, coat).
-# Copper instead. A metal's color is its reflectance seen head-on (F0); real
-# copper's is about 0.95 0.64 0.54 (linear): light and salmon-pink. Bare
-# copper tarnishes, so copper parts get a clear lacquer: the coat.
-material rim principled color 0.95 0.64 0.54 metallic 1 roughness 0.25 clearcoat 1 clearcoat_roughness 0.03
-# Or copper paint ("burnished copper"): darker, browner, satin under a coat
-#material rim principled color 0.55 0.27 0.17 metallic 1 roughness 0.35 clearcoat 1 clearcoat_roughness 0.03
+# Satin copper paint instead, matched to a reference photo: copper's hue
+# (real copper's head-on reflectance F0 is 0.95 0.64 0.54 linear) at about 60%
+# of its brightness, the brownish copper of a metallic paint. Satin: a rough
+# flake base (broad soft highlights) under a coat that is not mirror-smooth,
+# so the softboxes show as soft glows rather than sharp shapes.
+material rim principled color 0.55 0.33 0.26 metallic 1 roughness 0.4 clearcoat 1 clearcoat_roughness 0.2
+# Or bright lacquered copper (bare metal under a clear coat): salmon-pink, glossy
+#material rim principled color 0.95 0.64 0.54 metallic 1 roughness 0.25 clearcoat 1 clearcoat_roughness 0.03
 
 mesh ../models/external/porsche_992_gt3_rs.glb  replace Material.038_64 window  replace Material.038_63 window  replace Material.038_49 headlight  replace Material.058 rim  replace Material.043 paint  rotate_y 180   # this model faces -z
