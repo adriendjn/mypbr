@@ -11,7 +11,7 @@ alpha masks, fog, denoiser) and 12 (normal maps, textured roughness/metallic, co
 glass, Kulla-Conty compensation, power-based light selection) and 13 (MagicaVoxel look:
 .vox loader, DDA voxel grid, sun, atmospheric sky, ground, bloom/vignette/bokeh, ortho
 camera, height fog, `style voxel` preset). Milestone 14 (cars) has started: glTF 2.0 loading
-(`mesh car.glb`), thin glass, `scenes/car_*.scene`, clearcoat (`principled` coat layer, KHR_materials_clearcoat). Known gaps: grey-scale
+(`mesh car.glb`), thin glass, `scenes/car_*.scene` (the Porsche comes from Sketchfab: `SKETCHFAB_TOKEN` in a git-ignored `.env`), clearcoat (`principled` coat layer, KHR_materials_clearcoat). Known gaps: grey-scale
 bump/height maps are skipped with a warning, rough glass is not energy-compensated,
 the denoiser's normal guide ignores normal maps. The BSDFs, area lights and HDRI are
 validated against Mitsuba 3 (`tools/mitsuba/`, results in its README).
@@ -153,6 +153,8 @@ variance; `main` runs `denoiser::run` on the `frame` before every save.
   A material on a glTF `mesh` line replaces all of the file's materials (clay); `default_material` means none given.
 - glTF emission with a texture becomes `emissive_surface`, which is not in `lights`; only untextured emission is an
   area light, so a large textured emitter (CarConcept's rims carry the logo texture) costs nothing in `sample_light`.
+- glTF `BLEND`/`MASK` alpha without a texture is a constant coverage (a 1x1 `image_texture` mask): real-time
+  models use see-through shells (the Porsche's 46% "coat") that a path tracer hits with that probability.
 - Alpha-masked triangles call `random_double()` inside `hit()` (stochastic coverage);
   `hit()` must not write `rec` before that test, or a rejected hit corrupts the BVH's
   closest-so-far record.

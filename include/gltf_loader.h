@@ -38,7 +38,9 @@
 //                                            thin-walled without KHR_materials_volume)
 //   KHR_materials_ior                        principled / glass ior (default 1.5)
 //   KHR_texture_transform                    uv_transform_texture
-//   alphaMode MASK or BLEND                  base color alpha as a coverage mask
+//   alphaMode MASK or BLEND                  base color alpha as a coverage mask:
+//                                            the texture's alpha, or without one
+//                                            the alpha of baseColorFactor
 //
 // Other extensions (sheen, iridescence, ...) are listed on std::clog
 // and left out. Images inside the file are decoded from memory; image paths
@@ -139,8 +141,20 @@ inline bool load_gltf(const std::string& path, std::shared_ptr<material> overrid
         std::shared_ptr<texture> base_image = view_texture(pbr.base_color_texture, false);
         if (m->alpha_mode != cgltf_alpha_mode_opaque && !pbr.base_color_texture.has_transform) {
             auto image = load_image(pbr.base_color_texture.texture, false);
-            if (image && image->has_alpha_channel() && !image->fully_opaque())
+            double alpha = pbr.base_color_factor[3];
+            if (image && image->has_alpha_channel() && !image->fully_opaque()) {
                 result.second = image;
+                if (alpha < 1)
+                    ignored.insert("alpha factor times an alpha texture (the texture is used alone)");
+            } else if (!image && alpha < 1) {
+                // A constant coverage: the alpha of baseColorFactor. MASK cuts it
+                // at alphaCutoff; BLEND keeps it, so a shell of 46% alpha is hit by
+                // 46% of rays (what a rasterizer's blending averages to)
+                if (m->alpha_mode == cgltf_alpha_mode_mask)
+                    alpha = alpha >= m->alpha_cutoff ? 1 : 0;
+                if (alpha < 1)
+                    result.second = std::make_shared<image_texture>(alpha);
+            }
         }
         if (override_mat) {
             result.first = override_mat;
