@@ -58,3 +58,39 @@ fetch chr_knight.vox "$VOX/character/chr_knight.vox"
 GLTF=https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/8f492390ddc7a2ae221a1369ef560589cf8c70fb/Models
 fetch CarConcept.glb "$GLTF/CarConcept/glTF-Binary/CarConcept.glb"
 fetch ToyCar.glb "$GLTF/ToyCar/glTF-Binary/ToyCar.glb"
+
+# Sketchfab cars (CC-BY 4.0), for scenes/car_porsche930.scene and
+# scenes/car_bmw_e30.scene. Sketchfab only serves downloads to a signed-in
+# account, so these need your API token (free account, then
+# https://sketchfab.com/settings/password, "API Token"):
+#   SKETCHFAB_TOKEN=... tools/fetch_models.sh
+# Each glTF archive is unpacked into models/external/<name>/ (scene.gltf,
+# scene.bin, textures/, license.txt with the credit to give).
+fetch_sketchfab() {
+    if [ -f "models/external/$1/scene.gltf" ]; then
+        echo "models/external/$1 already present"
+        return
+    fi
+    if [ -z "$SKETCHFAB_TOKEN" ]; then
+        echo "Skipping $1: set SKETCHFAB_TOKEN to download it from Sketchfab"
+        return
+    fi
+    echo "Downloading $1 from Sketchfab..."
+    # The API answers with short-lived links to each format; take the glTF zip
+    url=$(curl -fsS --retry 3 -H "Authorization: Token $SKETCHFAB_TOKEN" \
+              "https://api.sketchfab.com/v3/models/$2/download" \
+          | python3 -c 'import json, sys; print(json.load(sys.stdin)["gltf"]["url"])')
+    curl -fL --retry 3 -o "models/external/$1.zip" "$url"
+    rm -rf "models/external/$1.part"
+    python3 -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' \
+        "models/external/$1.zip" "models/external/$1.part"
+    rm "models/external/$1.zip"
+    mv "models/external/$1.part" "models/external/$1"
+}
+
+# "FREE 1975 Porsche 911 (930) Turbo" by Lionsharp Studios
+# https://sketchfab.com/3d-models/free-1975-porsche-911-930-turbo-8568d9d14a994b9cae59499f0dbed21e
+fetch_sketchfab porsche930 8568d9d14a994b9cae59499f0dbed21e
+# "[FREE] BMW M3 E30" by Martin Trafas (TinoD2)
+# https://sketchfab.com/3d-models/free-bmw-m3-e30-ac3c7013434e403e8faff87948caf422
+fetch_sketchfab bmw_e30 ac3c7013434e403e8faff87948caf422
