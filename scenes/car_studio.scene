@@ -2,7 +2,7 @@
 # setup, around the Porsche 992 GT3 RS ("porsche-992-gt3-rs" on Sketchfab,
 # saved as models/external/porsche_992_gt3_rs.glb; not in git).
 #
-# The car is the one line at the bottom: any car whose wheels sit on y = 0,
+# The car is the mesh line at the bottom (its replace options only fit this model): any car whose wheels sit on y = 0,
 # centered on the origin with its length along z and its nose towards +z,
 # drops in (turn or move it with rotate_y / translate otherwise). The camera
 # is at the front right three-quarter view, and the cyclorama is turned
@@ -40,7 +40,9 @@ aspect_ratio 16/9
 samples_per_pixel 256
 max_depth    16
 
-camera lookfrom 5.6 1.3 6.6  lookat 0 0.6 0  vfov 34
+# Low (1 m, below the roofline) and on a longer lens: the car fills the
+# frame and looks more imposing than seen from eye height
+camera lookfrom 5.2 1.0 6.1  lookat 0 0.6 0.1  vfov 25
 
 background 0 0 0
 tonemap    aces
@@ -60,4 +62,13 @@ softbox center -3.2 1.5 4.5 aim 0 0.5 1.5    size 0.7 3  strip
 material wash     emissive 30 30 30 spread 120
 softbox center -3.2 0.2 -3.9 aim -5.1 2 -6.1  size 4 0.3  wash
 
-mesh ../models/external/porsche_992_gt3_rs.glb  rotate_y 180   # this model faces -z
+# The model's windows are see-through shells for a real-time viewer: dark
+# purple, hit by 41% of the rays, so they looked pink from the overhead
+# light's reflection. Real glass instead: a thin sheet that reflects by
+# Fresnel (about 4% head-on, a mirror at grazing angles) and lets the rest
+# straight through. Each window is two shells (outside and inside), so the
+# tint is per shell. The headlight covers get clear glass too.
+material window    thin_glass 1.5 color 0.92 0.95 0.93
+material headlight thin_glass 1.5
+
+mesh ../models/external/porsche_992_gt3_rs.glb  replace Material.038_64 window  replace Material.038_63 window  replace Material.038_49 headlight  rotate_y 180   # this model faces -z

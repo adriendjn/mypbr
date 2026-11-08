@@ -52,11 +52,14 @@
 // mesh per material. glTF is y-up and in meters, like our scenes.
 //
 // With override_mat set, every primitive uses it instead of its own material
-// (a clay render). Returns false with a message in error if the file cannot
+// (a clay render). replace swaps single materials by their name in the file
+// (real glass for a model's see-through window shells); a replaced material
+// is hit by every ray, its alpha coverage dropped. Returns false with a message in error if the file cannot
 // be read or has no triangles; bounds gets the box around all triangles.
 inline bool load_gltf(const std::string& path, std::shared_ptr<material> override_mat,
                       std::vector<obj_part>& parts, aabb& bounds, std::string& error,
-                      bool use_normal_maps = true) {
+                      bool use_normal_maps = true,
+                      const std::map<std::string, std::shared_ptr<material>>& replace = {}) {
     cgltf_options options{};
     cgltf_data* raw = nullptr;
     if (cgltf_parse_file(&options, path.c_str(), &raw) != cgltf_result_success) {
@@ -121,6 +124,17 @@ inline bool load_gltf(const std::string& path, std::shared_ptr<material> overrid
         return result;
     };
 
+    // A name to replace that the file doesn't have is a typo, not a no-op
+    for (const auto& [name, mat] : replace) {
+        bool found = false;
+        for (cgltf_size k = 0; k < data->materials_count && !found; k++)
+            found = data->materials[k].name && name == data->materials[k].name;
+        if (!found) {
+            error = "'" + path + "' has no material named '" + name + "'";
+            return false;
+        }
+    }
+
     using surface = std::pair<std::shared_ptr<material>, std::shared_ptr<image_texture>>;
     std::map<const cgltf_material*, surface> converted;
     auto convert = [&](const cgltf_material* m) -> surface {
@@ -133,6 +147,12 @@ inline bool load_gltf(const std::string& path, std::shared_ptr<material> overrid
                                         : std::make_shared<principled>(std::make_shared<solid_color>(color(1, 1, 1)),
                                                                        1.0, 1.0, 1.5);
             return converted[m] = result;
+        }
+        if (m->name) {
+            if (auto it = replace.find(m->name); it != replace.end()) {
+                result.first = it->second;
+                return converted[m] = result;
+            }
         }
         const auto& pbr = m->pbr_metallic_roughness;
         color base_factor(pbr.base_color_factor[0], pbr.base_color_factor[1], pbr.base_color_factor[2]);
