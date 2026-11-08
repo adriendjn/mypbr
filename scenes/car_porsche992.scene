@@ -1,0 +1,25 @@
+# "Porsche 992 GT3 RS" by VTX (VTX_car) on Sketchfab (CC BY-NC-SA 4.0: credit
+# the author, non-commercial use only, share derived models under the same
+# license). tools/fetch_models.sh downloads it with a Sketchfab API token.
+# The quarry HDRI's low sun lights the front three-quarter view and throws a
+# long shadow to the right.
+#
+# Unlike the Carrera 4S it has a cockpit. Its windows are dark glossy shells
+# with 40% alpha (alphaMode BLEND): 40% of the rays stop on them and the rest
+# see the seats and the roll cage. The file faces -z: turned to face the camera.
+
+image_width  960
+aspect_ratio 16/9
+samples_per_pixel 256
+max_depth    16
+
+camera lookfrom 5.0 1.3 5.5  lookat 0 0.55 0  vfov 32
+
+environment ../textures/quarry_01_1k.hdr  rotate 130
+exposure    -0.5
+tonemap     aces
+
+material asphalt principled color 0.35 0.35 0.35 roughness 0.5
+ground asphalt
+
+mesh ../models/external/porsche_992_gt3_rs.glb  rotate_y 180
