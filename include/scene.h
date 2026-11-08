@@ -92,6 +92,10 @@ class scene{
 //                              # colored glass (Beer-Lambert absorption): light that
 //                              # travels <distance> inside keeps <color> of itself,
 //                              # so thick parts are darker (defaults: clear, distance 1)
+//   material window thin_glass 1.5 [color 0.9 0.95 0.92]
+//                              # a glass sheet with no thickness (car windows): it
+//                              # reflects (Fresnel of both faces) or lets light
+//                              # straight through, keeping <color> of it
 //   material paint  principled color 0.8 0.1 0.1 metallic 0 roughness 0.4 ior 1.5
 //
 // principled settings are all optional and can come in any order (defaults:
@@ -164,6 +168,10 @@ class scene{
 //                                                     # gltf_loader.h); a material
 //                                                     # given here replaces all of
 //                                                     # them (clay render)
+//   mesh   models/car.glb  replace Glass_mat window   # ... or swaps one of them, by
+//                                                     # its name in the file, for a
+//                                                     # scene material (repeat it for
+//                                                     # several; alpha is dropped)
 //
 //   vox    models/island.vox  [quads] [emission 1]    # MagicaVoxel model or scene:
 //                                                     # every model the file's scene
@@ -422,7 +430,7 @@ inline bool load_scene(const std::string& path, scene& result) {
 
     // Meshes already loaded, by file and default material, so repeated
     // "mesh" lines share geometry and only add instances.
-    std::map<std::tuple<std::string, bool, const material*, bool>, std::vector<obj_part>> mesh_cache;
+    std::map<std::tuple<std::string, bool, const material*, bool, std::string>, std::vector<obj_part>> mesh_cache;
 
     // Global fog, added once the whole scene (and so its extent) is known
     double fog_density = 0;
@@ -773,6 +781,20 @@ inline bool load_scene(const std::string& path, scene& result) {
                         return fail(line_number, usage);
                 }
                 mat = std::make_shared<dielectric>(ior, roughness, dielectric::absorption_for(tint, distance));
+            } else if (type == "thin_glass") {
+                const char* usage = "expected 'material <name> thin_glass <index of refraction> [color <r> <g> <b>]'";
+                double ior;
+                color tint(1, 1, 1);
+                std::string key;
+                if (!(in >> ior) || ior <= 0)
+                    return fail(line_number, usage);
+                if (in >> key) {
+                    double r, g, b;
+                    if (key != "color" || !(in >> r >> g >> b) || r < 0 || g < 0 || b < 0 || r > 1 || g > 1 || b > 1)
+                        return fail(line_number, usage);
+                    tint = color(r, g, b);
+                }
+                mat = std::make_shared<thin_dielectric>(ior, tint);
             } else if (type == "principled") {
                 std::shared_ptr<texture> base = std::make_shared<solid_color>(color(0.8, 0.8, 0.8));
                 std::shared_ptr<texture> metallic = std::make_shared<solid_color>(color(0, 0, 0));
@@ -1076,10 +1098,30 @@ inline bool load_scene(const std::string& path, scene& result) {
             std::istringstream peek(rest);
             bool smooth = (peek >> first) && first == "smooth";
             std::istringstream tail(smooth ? rest.substr(rest.find("smooth") + 6) : rest);
+            // Then any number of "replace <file material> <scene material>" (glTF)
+            std::map<std::string, std::shared_ptr<material>> replace;
+            std::string replace_key;  // Part of the cache key
+            std::streampos mark = tail.tellg();
+            std::string token;
+            while (tail >> token && token == "replace") {
+                std::string from, to;
+                if (!(tail >> from >> to))
+                    return fail(line_number, "expected 'replace <material in the file> <scene material>'");
+                auto it = materials.find(to);
+                if (it == materials.end())
+                    return fail(line_number, "unknown material '" + to + "'");
+                replace[from] = it->second;
+                replace_key += from + '\n' + to + '\n';
+                mark = tail.tellg();
+            }
+            tail.clear();
+            tail.seekg(mark);
             if (!read_tail(tail, mat, xform, transformed, error))
                 return fail(line_number, error);
+            if (!replace.empty() && mat != default_material)
+                return fail(line_number, "'replace' and a material for the whole mesh can't be used together");
 
-            auto key = std::make_tuple(file, smooth, mat.get(), use_normal_maps);
+            auto key = std::make_tuple(file, smooth, mat.get(), use_normal_maps, replace_key);
             auto cached = mesh_cache.find(key);
             if (cached == mesh_cache.end()) {
                 std::vector<obj_part> parts;
@@ -1091,7 +1133,9 @@ inline bool load_scene(const std::string& path, scene& result) {
                 aabb bounds;
                 // glTF files bring their own materials: one named on the line replaces them all
                 auto override_mat = mat == default_material ? nullptr : mat;
-                if (gltf ? !load_gltf(file, override_mat, parts, bounds, error, use_normal_maps)
+                if (!gltf && !replace.empty())
+                    return fail(line_number, "'replace' is for glTF files (OBJ files take scene materials by usemtl name)");
+                if (gltf ? !load_gltf(file, override_mat, parts, bounds, error, use_normal_maps, replace)
                          : !load_obj(file, materials, mat, smooth, parts, error, use_normal_maps))
                     return fail(line_number, error);
                 size_t triangle_count = 0;
