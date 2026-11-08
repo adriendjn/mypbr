@@ -66,8 +66,9 @@ softbox center -3.2 0.2 -3.9 aim -5.1 2 -6.1  size 4 0.3  wash
 # floor beside and behind the car, which is dark: the spokes went brown
 # with a bright rim. A low strip there, along the car and facing it, is what
 # the spoke faces see. Car photographers do the same with a low softbox.
-material wheel    emissive 10 10 10 spread 90
-softbox center 2.4 0.35 -1.9 aim 0.9 0.35 -1.5  size 3.2 0.5  wheel
+# It sits just right of the frame: its back is black and would show.
+material wheel    emissive 15 15 15 spread 90
+softbox center 3.3 0.3 -1.4 aim 0.9 0.35 -0.4  size 2.2 0.5  wheel
 
 # The model's windows are see-through shells for a real-time viewer: dark
 # purple, hit by 41% of the rays, so they looked pink from the overhead
