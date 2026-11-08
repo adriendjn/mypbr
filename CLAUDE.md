@@ -40,7 +40,7 @@ the only other translation unit (stb and cgltf, compiled as a SYSTEM library).
 | `scene.h` | `scene` struct and `load_scene()`. **The scene file format is documented in the comment at the top.** |
 | `camera.h` | Camera setup, tiled multithreaded progressive render, and the integrator (`ray_color`, `sample_light`). |
 | `denoiser.h` | `frame` (radiance + albedo/normal/variance guides) and `denoiser`: firefly clamp, then SVGF-style edge-avoiding à-trous filter on radiance / albedo. |
-| `material.h` | `material` interface; `lambertian`, `metal`, `dielectric` (optional Beer-Lambert tint), `principled` (metallic/roughness textures, own base normal map, optional clear coat with its own roughness and normal map), `diffuse_light` (optional honeycomb-grid `spread`), `normal_mapped` (wrapper that bends the shading normal), `thin_dielectric` (glass sheet: reflect or pass straight), `emissive_surface` (textured glow on another material, not a light). |
+| `material.h` | `material` interface; `lambertian`, `metal`, `dielectric` (optional Beer-Lambert tint), `principled` (metallic/roughness textures, own base normal map, optional clear coat with its own roughness and normal map), `diffuse_light` (optional honeycomb-grid `spread`), `normal_mapped` (wrapper that bends the shading normal), `thin_dielectric` (glass sheet: reflect or pass straight; scene type `thin_glass`), `emissive_surface` (textured glow on another material, not a light). |
 | `microfacet.h` | GGX distribution + Smith G, Fresnel, VNDF reflection sampling, Kulla-Conty multiple-scattering compensation (`ggx_albedo_table`, `ggx_ms_term`), rough dielectric BSDF. |
 | `environment.h` | `environment_light`: equirectangular HDR sky, importance sampled with a 2D CDF; lives in `lights` and `camera::environment`. |
 | `medium.h` | `constant_medium` (homogeneous fog in a convex boundary, free-flight sampling in `hit`) and `phase_material` (Henyey-Greenstein). |
@@ -155,6 +155,8 @@ variance; `main` runs `denoiser::run` on the `frame` before every save.
 - glTF uvs are flipped on load (v = 1 - v, ours is 0 at the bottom); `uv_transform_texture` flips back to apply
   KHR_texture_transform in glTF's own space. glTF packs roughness in green and metallic in blue (`channel_texture`).
   A material on a glTF `mesh` line replaces all of the file's materials (clay); `default_material` means none given.
+  `replace <file material> <scene material>` swaps one by name (e.g. real `thin_glass` for a model's alpha-blended
+  window shells); a replaced material drops the file's alpha coverage, and an unknown name is an error.
 - glTF emission with a texture becomes `emissive_surface`, which is not in `lights`; only untextured emission is an
   area light, so a large textured emitter (CarConcept's rims carry the logo texture) costs nothing in `sample_light`.
 - glTF `BLEND`/`MASK` alpha without a texture is a constant coverage (a 1x1 `image_texture` mask): real-time
