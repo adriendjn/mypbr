@@ -6,6 +6,12 @@
 # pinned to fixed commits so the files never change under the scenes.
 set -e
 cd "$(dirname "$0")/.."
+# Local settings such as SKETCHFAB_TOKEN=... (.env is ignored by git)
+if [ -f .env ]; then
+    set -a
+    . ./.env
+    set +a
+fi
 mkdir -p models/external
 
 fetch() {
@@ -62,8 +68,9 @@ fetch ToyCar.glb "$GLTF/ToyCar/glTF-Binary/ToyCar.glb"
 # Sketchfab cars (CC-BY 4.0), for scenes/car_porsche930.scene and
 # scenes/car_bmw_e30.scene. Sketchfab only serves downloads to a signed-in
 # account, so these need your API token (free account, then
-# https://sketchfab.com/settings/password, "API Token"), given in the
-# environment and never written in the repository:
+# https://sketchfab.com/settings/password, "API Token"), either in the
+# environment or as a line SKETCHFAB_TOKEN=... in .env at the repository root
+# (ignored by git, so the token is never committed):
 #   SKETCHFAB_TOKEN=... tools/fetch_models.sh
 # Each model comes as one .glb (the "GLB" converted format, 4k textures).
 fetch_sketchfab() {
